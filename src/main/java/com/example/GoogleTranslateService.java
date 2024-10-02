@@ -29,12 +29,14 @@ public class GoogleTranslateService {
         List<String> lines;
         boolean isComment;
         boolean isEmptyLine;
+        int trailingEmptyLines;
 
         PropertyEntry(String key, boolean isComment, boolean isEmptyLine) {
             this.key = key;
             this.lines = new ArrayList<>();
             this.isComment = isComment;
             this.isEmptyLine = isEmptyLine;
+            this.trailingEmptyLines = 0;
         }
     }
 
@@ -43,30 +45,39 @@ public class GoogleTranslateService {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(inputFile), StandardCharsets.UTF_8))) {
             String line;
             PropertyEntry currentEntry = null;
+            int emptyLineCount = 0;
 
             while ((line = reader.readLine()) != null) {
-                if (line.trim().startsWith("#")) {
-                    entries.add(new PropertyEntry(line, true, false));
-                } else if (line.trim().isEmpty()) {
-                    entries.add(new PropertyEntry("", false, true));
+                if (line.trim().isEmpty()) {
+                    emptyLineCount++;
                 } else {
-                    int separatorIndex = line.indexOf('=');
-                    if (separatorIndex > 0 && (currentEntry == null || !currentEntry.lines.get(currentEntry.lines.size() - 1).trim().endsWith("\\"))) {
-                        if (currentEntry != null) {
-                            entries.add(currentEntry);
-                        }
-                        String key = line.substring(0, separatorIndex).trim();
-                        currentEntry = new PropertyEntry(key, false, false);
-                        currentEntry.lines.add(line);
-                    } else if (currentEntry != null) {
-                        currentEntry.lines.add(line);
+                    if (currentEntry != null) {
+                        currentEntry.trailingEmptyLines = emptyLineCount;
+                    }
+                    emptyLineCount = 0;
+
+                    if (line.trim().startsWith("#")) {
+                        entries.add(new PropertyEntry(line, true, false));
                     } else {
-                        currentEntry = new PropertyEntry(line, false, false);
-                        currentEntry.lines.add(line);
+                        int separatorIndex = line.indexOf('=');
+                        if (separatorIndex > 0 && (currentEntry == null || !currentEntry.lines.get(currentEntry.lines.size() - 1).trim().endsWith("\\"))) {
+                            if (currentEntry != null) {
+                                entries.add(currentEntry);
+                            }
+                            String key = line.substring(0, separatorIndex).trim();
+                            currentEntry = new PropertyEntry(key, false, false);
+                            currentEntry.lines.add(line);
+                        } else if (currentEntry != null) {
+                            currentEntry.lines.add(line);
+                        } else {
+                            currentEntry = new PropertyEntry(line, false, false);
+                            currentEntry.lines.add(line);
+                        }
                     }
                 }
             }
             if (currentEntry != null) {
+                currentEntry.trailingEmptyLines = emptyLineCount;
                 entries.add(currentEntry);
             }
         }
@@ -102,6 +113,7 @@ public class GoogleTranslateService {
                         String translatedValue = translateValueWithGlossary(client, parent, fullValue, targetLanguage, glossaryName);
                         String[] translatedLines = translatedValue.split("\n");
                         translatedEntry.lines.addAll(List.of(translatedLines));
+                        translatedEntry.trailingEmptyLines = entry.trailingEmptyLines;
                         translatedEntries.add(translatedEntry);
                     } catch (Exception e) {
                         System.err.println("Failed to translate property: " + entry.key + ". Error: " + e.getMessage());
@@ -165,54 +177,53 @@ public class GoogleTranslateService {
         String key = value.substring(0, separatorIndex + 1);
         String contentToTranslate = value.substring(separatorIndex + 1);
 
-        // Split the content into lines
-        String[] lines = contentToTranslate.split("\n");
-        List<String> translatedLines = new ArrayList<>();
+        // Remove line breaks and backslashes for translation
+        String cleanContent = contentToTranslate.replaceAll("\\s*\\\\\n\\s*", " ").trim();
 
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i].trim();
-            String leadingWhitespace = getLeadingWhitespace(lines[i]);
+        TranslateTextGlossaryConfig glossaryConfig = TranslateTextGlossaryConfig.newBuilder()
+                .setGlossary(glossaryName)
+                .build();
 
-            if (line.isEmpty()) {
-                translatedLines.add("");
-                continue;
+        TranslateTextRequest request = TranslateTextRequest.newBuilder()
+                .setParent(parent.toString())
+                .setMimeType("text/plain")
+                .setSourceLanguageCode("en")
+                .setTargetLanguageCode(targetLanguage)
+                .addContents(cleanContent)
+                .setGlossaryConfig(glossaryConfig)
+                .build();
+
+        TranslateTextResponse response = client.translateText(request);
+        String translatedText = response.getGlossaryTranslations(0).getTranslatedText().trim();
+
+        // Reinsert line breaks and backslashes
+        String[] originalLines = contentToTranslate.split("\n");
+        StringBuilder result = new StringBuilder(key);
+        for (int i = 0; i < originalLines.length; i++) {
+            String originalLine = originalLines[i].trim();
+            if (i > 0) {
+                result.append("\n");
+                result.append(getLeadingWhitespace(originalLines[i]));
             }
-
-            // Remove trailing backslash for translation
-            boolean endsWithBackslash = line.endsWith("\\");
-            if (endsWithBackslash) {
-                line = line.substring(0, line.length() - 1).trim();
+            if (i == originalLines.length - 1 || !originalLine.endsWith("\\")) {
+                result.append(translatedText);
+                translatedText = "";
+            } else {
+                int splitIndex = Math.min(originalLine.length() - 1, translatedText.length());
+                result.append(translatedText.substring(0, splitIndex).trim()).append(" \\");
+                translatedText = translatedText.substring(splitIndex).trim();
             }
-
-            TranslateTextGlossaryConfig glossaryConfig = TranslateTextGlossaryConfig.newBuilder()
-                    .setGlossary(glossaryName)
-                    .build();
-
-            TranslateTextRequest request = TranslateTextRequest.newBuilder()
-                    .setParent(parent.toString())
-                    .setMimeType("text/plain")
-                    .setSourceLanguageCode("en")
-                    .setTargetLanguageCode(targetLanguage)
-                    .addContents(line)
-                    .setGlossaryConfig(glossaryConfig)
-                    .build();
-
-            TranslateTextResponse response = client.translateText(request);
-            String translatedText = response.getGlossaryTranslations(0).getTranslatedText().trim();
-
-            // Reattach leading whitespace and trailing backslash
-            String translatedLine = leadingWhitespace + translatedText;
-            if (endsWithBackslash) {
-                translatedLine += " \\";
-            }
-
-            translatedLines.add(translatedLine);
         }
 
-        return key + String.join("\n", translatedLines);
+        String finalResult = result.toString().trim();
+        if (finalResult.endsWith("\\")) {
+            finalResult = finalResult.substring(0, finalResult.length() - 1).trim();
+        }
+
+        return finalResult;
     }
 
-    private static String getLeadingWhitespace(String s) {
+    private String getLeadingWhitespace(String s) {
         StringBuilder whitespace = new StringBuilder();
         for (char c : s.toCharArray()) {
             if (Character.isWhitespace(c)) {
@@ -227,9 +238,7 @@ public class GoogleTranslateService {
     private static void writePropertiesUtf8(List<PropertyEntry> entries, String filename) throws IOException {
         try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(filename), StandardCharsets.UTF_8))) {
             for (PropertyEntry entry : entries) {
-                if (entry.isEmptyLine) {
-                    writer.newLine();
-                } else if (entry.isComment) {
+                if (entry.isComment) {
                     writer.write(entry.key);
                     writer.newLine();
                 } else {
@@ -237,6 +246,11 @@ public class GoogleTranslateService {
                         writer.write(line);
                         writer.newLine();
                     }
+                }
+
+                // Add trailing empty lines
+                for (int j = 0; j < entry.trailingEmptyLines; j++) {
+                    writer.newLine();
                 }
             }
         }
