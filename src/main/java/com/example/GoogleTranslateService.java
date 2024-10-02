@@ -1,6 +1,7 @@
 package com.example;
 
 import com.google.api.gax.longrunning.OperationFuture;
+import com.google.api.gax.rpc.StatusCode;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.translate.v3.*;
 import com.google.api.gax.rpc.ApiException;
@@ -130,16 +131,25 @@ public class GoogleTranslateService {
 
     private void createGlossaryIfNotExists(TranslationServiceClient client, LocationName parent, String glossaryName) throws IOException {
         try {
+            // Attempt to get the glossary
             client.getGlossary(glossaryName);
             System.out.println("Glossary already exists: " + glossaryName);
         } catch (ApiException e) {
-            if (e.getStatusCode().getCode().equals(com.google.rpc.Code.NOT_FOUND)) {
+            // Get the StatusCode.Code and compare it using ordinal or integer comparison
+            StatusCode.Code statusCode = e.getStatusCode().getCode();
+
+            if (statusCode == StatusCode.Code.NOT_FOUND) {
+                // Glossary not found, so attempt to create it
+                System.out.println("Glossary not found. Attempting to create glossary: " + glossaryName);
                 createGlossary(client, parent);
             } else {
+                // Handle other exceptions (e.g., permission issues)
                 throw new IOException("Error checking glossary: " + e.getMessage(), e);
             }
         }
     }
+
+
 
     private void createGlossary(TranslationServiceClient client, LocationName parent) throws IOException {
         String inputUri = "gs://" + BUCKET_NAME + "/" + GLOSSARY_FILE_NAME;
