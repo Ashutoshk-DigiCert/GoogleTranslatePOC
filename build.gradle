@@ -1,36 +1,10 @@
-//plugins {
-//    id 'java'
-//    // Apply the application plugin to add support for building a CLI application in Java.
-//    id 'application'
-//}
-//
-//repositories {
-//    mavenCentral()
-//}
-//
-//dependencies {
-//    implementation 'com.google.cloud:google-cloud-translate:2.49.0'
-//    // Or a later version if available.
-//
-//    // You might also need these for authentication and other Cloud Storage operations:
-//    implementation 'com.google.auth:google-auth-library-oauth2-http:1.16.0'
-//    implementation 'com.google.cloud:google-cloud-storage:2.19.0'
-//
-//    testImplementation 'junit:junit:4.13.2'
-//    testImplementation 'org.mockito:mockito-core:4.8.0'
-//}
-//
-//application {
-//    // Define the main class for the application.
-//    mainClass = 'com.example.TranslateWithGlossary' // Replace with your actual package and class name
-//}
-
 plugins {
     id 'java'
     id 'application'
+    id 'com.github.johnrengelman.shadow' version '7.1.2'
 }
 
-group = 'com.gtp'
+group = 'com.example'
 version = '0.0.1-SNAPSHOT'
 
 java {
@@ -46,15 +20,10 @@ dependencies {
     implementation 'com.google.cloud:google-cloud-translate:2.49.0'
     implementation 'com.google.auth:google-auth-library-oauth2-http:1.16.0'
     implementation 'com.google.cloud:google-cloud-storage:2.19.0'
-
 }
 
 application {
     mainClass = 'com.example.GoogleTranslateService'
-}
-
-tasks.named('test') {
-    useJUnitPlatform()
 }
 
 tasks.withType(JavaCompile) {
@@ -65,30 +34,51 @@ tasks.withType(Javadoc) {
     options.encoding = 'UTF-8'
 }
 
+shadowJar {
+    mergeServiceFiles()
+    manifest {
+        attributes 'Main-Class': 'com.example.GoogleTranslateService'
+    }
+}
+
 tasks.register('translateProperties', JavaExec) {
     group = 'Translation'
     description = 'Translates application.properties file to target language'
-
     mainClass = 'com.example.GoogleTranslateService'
     classpath = sourceSets.main.runtimeClasspath
-
     doFirst {
         def targetLanguage = project.findProperty('targetLanguage')
-
-        if (targetLanguage == null) {
-            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language.")
+        def deleteGlossary = project.hasProperty('deleteGlossary')
+        if (targetLanguage == null && !deleteGlossary) {
+            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language, or use -PdeleteGlossary to delete the glossary.")
         }
-
         if (System.getenv('GOOGLE_APPLICATION_CREDENTIALS') == null) {
             environment 'GOOGLE_APPLICATION_CREDENTIALS', '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
             if (System.getenv('GOOGLE_APPLICATION_CREDENTIALS') == null) {
                 throw new GradleException("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.")
             }
         }
-
-        args = [targetLanguage]
+        args = deleteGlossary ? ['dummy', 'deleteGlossary'] : [targetLanguage]
     }
+    systemProperty "file.encoding", "UTF-8"
+    jvmArgs '-Dfile.encoding=UTF-8'
+}
 
+tasks.register('runJar', JavaExec) {
+    group = 'Execution'
+    description = 'Runs the shaded JAR file with specified arguments'
+    classpath = files(tasks.shadowJar)
+    doFirst {
+        def targetLanguage = project.findProperty('targetLanguage')
+        def deleteGlossary = project.hasProperty('deleteGlossary')
+        if (targetLanguage == null && !deleteGlossary) {
+            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language, or use -PdeleteGlossary to delete the glossary.")
+        }
+        if (System.getenv('GOOGLE_CREDENTIALS') == null) {
+            environment 'GOOGLE_CREDENTIALS', '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
+        }
+        args = deleteGlossary ? ['dummy', 'deleteGlossary'] : [targetLanguage]
+    }
     systemProperty "file.encoding", "UTF-8"
     jvmArgs '-Dfile.encoding=UTF-8'
 }

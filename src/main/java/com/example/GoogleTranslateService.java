@@ -266,18 +266,45 @@ public class GoogleTranslateService {
         }
     }
 
+    public void deleteGlossary() throws IOException {
+        try (TranslationServiceClient client = TranslationServiceClient.create()) {
+            String glossaryName = LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + GLOSSARY_ID;
+
+            // Delete glossary
+            OperationFuture<DeleteGlossaryResponse, DeleteGlossaryMetadata> future = client.deleteGlossaryAsync(glossaryName);
+
+            try {
+                DeleteGlossaryResponse response = future.get(5, TimeUnit.MINUTES);
+                System.out.println("Deleted glossary: " + response.getName());
+            } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                throw new IOException("Error deleting glossary: " + e.getMessage(), e);
+            }
+        } catch (Exception e) {
+            throw new IOException("Error creating TranslationServiceClient: " + e.getMessage(), e);
+        }
+    }
+
     public static void main(String[] args) {
-        if (args.length != 1) {
-            System.err.println("Usage: java GoogleTranslateService <targetLanguage>");
+        if (args.length < 1 || args.length > 2) {
+            System.err.println("Usage: java GoogleTranslateService <targetLanguage> [deleteGlossary]");
             System.exit(1);
         }
 
         String targetLanguage = args[0];
+        boolean shouldDeleteGlossary = args.length == 2 && args[1].equalsIgnoreCase("deleteGlossary");
+
         String inputPropsFile = "src/main/resources/application.properties";
         String outputPropsFile = "src/main/resources/application_" + targetLanguage + ".properties";
 
         try {
             GoogleTranslateService translator = new GoogleTranslateService();
+
+            if (shouldDeleteGlossary) {
+                translator.deleteGlossary();
+                System.out.println("Glossary deleted successfully.");
+                return;
+            }
+
             List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
             List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
 
@@ -287,7 +314,7 @@ public class GoogleTranslateService {
             writePropertiesUtf8(translatedEntries, outputPath.toString());
             System.out.println("Translation complete. Output file: " + outputPropsFile);
         } catch (IOException e) {
-            System.err.println("Error during translation process: " + e.getMessage());
+            System.err.println("Error during process: " + e.getMessage());
             e.printStackTrace();
             System.exit(1);
         }
