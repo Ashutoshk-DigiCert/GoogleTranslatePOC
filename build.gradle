@@ -1,0 +1,94 @@
+//plugins {
+//    id 'java'
+//    // Apply the application plugin to add support for building a CLI application in Java.
+//    id 'application'
+//}
+//
+//repositories {
+//    mavenCentral()
+//}
+//
+//dependencies {
+//    implementation 'com.google.cloud:google-cloud-translate:2.49.0'
+//    // Or a later version if available.
+//
+//    // You might also need these for authentication and other Cloud Storage operations:
+//    implementation 'com.google.auth:google-auth-library-oauth2-http:1.16.0'
+//    implementation 'com.google.cloud:google-cloud-storage:2.19.0'
+//
+//    testImplementation 'junit:junit:4.13.2'
+//    testImplementation 'org.mockito:mockito-core:4.8.0'
+//}
+//
+//application {
+//    // Define the main class for the application.
+//    mainClass = 'com.example.TranslateWithGlossary' // Replace with your actual package and class name
+//}
+
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.gtp'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.google.cloud:google-cloud-translate:2.49.0'
+    implementation 'com.google.auth:google-auth-library-oauth2-http:1.16.0'
+    implementation 'com.google.cloud:google-cloud-storage:2.19.0'
+
+}
+
+application {
+    mainClass = 'com.example.GoogleTranslateService'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(Javadoc) {
+    options.encoding = 'UTF-8'
+}
+
+tasks.register('translateProperties', JavaExec) {
+    group = 'Translation'
+    description = 'Translates application.properties file to target language'
+
+    mainClass = 'com.example.GoogleTranslateService'
+    classpath = sourceSets.main.runtimeClasspath
+
+    doFirst {
+        def targetLanguage = project.findProperty('targetLanguage')
+
+        if (targetLanguage == null) {
+            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language.")
+        }
+
+        if (System.getenv('GOOGLE_APPLICATION_CREDENTIALS') == null) {
+            environment 'GOOGLE_APPLICATION_CREDENTIALS', '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
+            if (System.getenv('GOOGLE_APPLICATION_CREDENTIALS') == null) {
+                throw new GradleException("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.")
+            }
+        }
+
+        args = [targetLanguage]
+    }
+
+    systemProperty "file.encoding", "UTF-8"
+    jvmArgs '-Dfile.encoding=UTF-8'
+}
