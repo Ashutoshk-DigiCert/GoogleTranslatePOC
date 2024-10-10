@@ -5,6 +5,9 @@ import com.google.api.gax.rpc.ApiException;
 import com.google.api.gax.rpc.StatusCode;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.translate.v3.*;
+import com.google.cloud.storage.Blob;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageOptions;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -142,18 +145,53 @@ public class GoogleTranslateService {
             StatusCode.Code statusCode = e.getStatusCode().getCode();
 
             if (statusCode == StatusCode.Code.NOT_FOUND) {
-                System.out.println("Glossary not found. Attempting to create glossary: " + glossaryName);
-                try {
-                    createGlossary(client, parent, targetLanguage);
-                    return true;
-                } catch (IOException createException) {
-                    System.err.println("Failed to create glossary: " + createException.getMessage());
+                System.out.println("Glossary not found. Checking if target language exists in the glossary file...");
+                if (isLanguageInGlossaryFile(targetLanguage)) {
+                    System.out.println("Target language found in glossary file. Attempting to create glossary: " + glossaryName);
+                    try {
+                        createGlossary(client, parent, targetLanguage);
+                        return true;
+                    } catch (IOException createException) {
+                        System.err.println("Failed to create glossary: " + createException.getMessage());
+                        return false;
+                    }
+                } else {
+                    System.out.println("Target language not found in glossary file. Skipping glossary creation.");
                     return false;
                 }
             } else {
                 System.err.println("Error checking glossary: " + e.getMessage());
                 return false;
             }
+        }
+    }
+
+    private boolean isLanguageInGlossaryFile(String targetLanguage) {
+        try {
+            Storage storage = StorageOptions.newBuilder().setProjectId(PROJECT_ID).build().getService();
+            Blob blob = storage.get(BUCKET_NAME, GLOSSARY_FILE_NAME);
+
+            if (blob == null) {
+                System.err.println("Glossary file not found in Google Cloud Storage");
+                return false;
+            }
+
+            String content = new String(blob.getContent(), StandardCharsets.UTF_8);
+            String[] lines = content.split("\n");
+
+            if (lines.length > 0) {
+                String[] headers = lines[0].split(",");
+                for (String header : headers) {
+                    if (header.trim().equalsIgnoreCase(targetLanguage)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        } catch (Exception e) {
+            System.err.println("Error reading glossary file from Google Cloud Storage: " + e.getMessage());
+            return false;
         }
     }
 
