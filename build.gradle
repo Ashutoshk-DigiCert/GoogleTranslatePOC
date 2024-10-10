@@ -1,3 +1,5 @@
+import org.gradle.api.GradleException
+
 plugins {
     id 'java'
     id 'application'
@@ -43,14 +45,14 @@ shadowJar {
 
 tasks.register('translateProperties', JavaExec) {
     group = 'Translation'
-    description = 'Translates application.properties file to target language'
+    description = 'Translates application.properties file to target language or deletes glossary'
     mainClass = 'com.example.GoogleTranslateService'
     classpath = sourceSets.main.runtimeClasspath
     doFirst {
         def targetLanguage = project.findProperty('targetLanguage')
         def deleteGlossary = project.hasProperty('deleteGlossary')
-        if (targetLanguage == null && !deleteGlossary) {
-            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language, or use -PdeleteGlossary to delete the glossary.")
+        if (targetLanguage == null) {
+            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language.")
         }
         if (System.getenv('GOOGLE_APPLICATION_CREDENTIALS') == null) {
             environment 'GOOGLE_APPLICATION_CREDENTIALS', '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
@@ -58,7 +60,7 @@ tasks.register('translateProperties', JavaExec) {
                 throw new GradleException("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.")
             }
         }
-        args = deleteGlossary ? ['dummy', 'deleteGlossary'] : [targetLanguage]
+        args = deleteGlossary ? [targetLanguage, 'deleteGlossary'] : [targetLanguage]
     }
     systemProperty "file.encoding", "UTF-8"
     jvmArgs '-Dfile.encoding=UTF-8'
@@ -71,13 +73,13 @@ tasks.register('runJar', JavaExec) {
     doFirst {
         def targetLanguage = project.findProperty('targetLanguage')
         def deleteGlossary = project.hasProperty('deleteGlossary')
-        if (targetLanguage == null && !deleteGlossary) {
-            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language, or use -PdeleteGlossary to delete the glossary.")
+        if (targetLanguage == null) {
+            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language.")
         }
         if (System.getenv('GOOGLE_CREDENTIALS') == null) {
             environment 'GOOGLE_CREDENTIALS', '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
         }
-        args = deleteGlossary ? ['dummy', 'deleteGlossary'] : [targetLanguage]
+        args = deleteGlossary ? [targetLanguage, 'deleteGlossary'] : [targetLanguage]
     }
     systemProperty "file.encoding", "UTF-8"
     jvmArgs '-Dfile.encoding=UTF-8'

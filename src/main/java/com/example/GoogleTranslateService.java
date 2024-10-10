@@ -1,18 +1,17 @@
 package com.example;
 
 import com.google.api.gax.longrunning.OperationFuture;
+import com.google.api.gax.rpc.ApiException;
 import com.google.api.gax.rpc.StatusCode;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.translate.v3.*;
-import com.google.api.gax.rpc.ApiException;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -21,65 +20,67 @@ public class GoogleTranslateService {
 
     private static final String PROJECT_ID = "translate-project-a-512";
     private static final String LOCATION = "us-central1";
-    private static final String GLOSSARY_ID = "my-glossary_id";
     private static final String BUCKET_NAME = "glossaries11";
     private static final String GLOSSARY_FILE_NAME = "glossaries1.csv";
 
     private static class PropertyEntry {
         String key;
         List<String> lines;
-        boolean isComment;
-        boolean isEmptyLine;
-        int trailingEmptyLines;
+        EntryType type;
 
-        PropertyEntry(String key, boolean isComment, boolean isEmptyLine) {
+        PropertyEntry(String key, List<String> lines, EntryType type) {
             this.key = key;
-            this.lines = new ArrayList<>();
-            this.isComment = isComment;
-            this.isEmptyLine = isEmptyLine;
-            this.trailingEmptyLines = 0;
+            this.lines = lines;
+            this.type = type;
         }
+    }
+
+    private enum EntryType {
+        PROPERTY, COMMENT, EMPTY_LINE
     }
 
     private List<PropertyEntry> readPropertiesFile(String inputFile) throws IOException {
         List<PropertyEntry> entries = new ArrayList<>();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(inputFile), StandardCharsets.UTF_8))) {
             String line;
-            PropertyEntry currentEntry = null;
-            int emptyLineCount = 0;
+            List<String> currentLines = new ArrayList<>();
+            String currentKey = null;
+            EntryType currentType = null;
 
             while ((line = reader.readLine()) != null) {
-                if (line.trim().isEmpty()) {
-                    emptyLineCount++;
-                } else {
-                    if (currentEntry != null) {
-                        currentEntry.trailingEmptyLines = emptyLineCount;
+                if (line.trim().startsWith("#")) {
+                    if (currentType != null) {
+                        entries.add(new PropertyEntry(currentKey, new ArrayList<>(currentLines), currentType));
+                        currentLines.clear();
                     }
-                    emptyLineCount = 0;
-
-                    if (line.trim().startsWith("#")) {
-                        entries.add(new PropertyEntry(line, true, false));
-                    } else {
-                        int separatorIndex = line.indexOf('=');
-                        if (separatorIndex > 0 && (currentEntry == null || !currentEntry.lines.get(currentEntry.lines.size() - 1).trim().endsWith("\\"))) {
-                            if (currentEntry != null) {
-                                entries.add(currentEntry);
-                            }
-                            String key = line.substring(0, separatorIndex).trim();
-                            currentEntry = new PropertyEntry(key, false, false);
-                            currentEntry.lines.add(line);
-                        } else if (currentEntry != null) {
-                            currentEntry.lines.add(line);
-                        } else {
-                            currentEntry = new PropertyEntry(line, false, false);
-                            currentEntry.lines.add(line);
+                    currentKey = line;
+                    currentLines.add(line);
+                    currentType = EntryType.COMMENT;
+                } else if (line.trim().isEmpty()) {
+                    if (currentType != null) {
+                        entries.add(new PropertyEntry(currentKey, new ArrayList<>(currentLines), currentType));
+                        currentLines.clear();
+                    }
+                    currentKey = "";
+                    currentLines.add(line);
+                    currentType = EntryType.EMPTY_LINE;
+                } else {
+                    int separatorIndex = line.indexOf('=');
+                    if (separatorIndex > 0 && (currentType != EntryType.PROPERTY || !currentLines.get(currentLines.size() - 1).trim().endsWith("\\"))) {
+                        if (currentType != null) {
+                            entries.add(new PropertyEntry(currentKey, new ArrayList<>(currentLines), currentType));
+                            currentLines.clear();
                         }
+                        currentKey = line.substring(0, separatorIndex).trim();
+                        currentLines.add(line);
+                        currentType = EntryType.PROPERTY;
+                    } else {
+                        currentLines.add(line);
                     }
                 }
             }
-            if (currentEntry != null) {
-                currentEntry.trailingEmptyLines = emptyLineCount;
-                entries.add(currentEntry);
+            if (currentType != null) {
+                entries.add(new PropertyEntry(currentKey, currentLines, currentType));
             }
         }
         return entries;
@@ -100,22 +101,25 @@ public class GoogleTranslateService {
 
         try (TranslationServiceClient client = TranslationServiceClient.create()) {
             LocationName parent = LocationName.of(PROJECT_ID, LOCATION);
-            String glossaryName = LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + GLOSSARY_ID;
+            String glossaryId = "glossary-" + targetLanguage.toLowerCase();
+            String glossaryName = LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + glossaryId;
 
-            createGlossaryIfNotExists(client, parent, glossaryName);
+            boolean glossaryExists = createGlossaryIfNotExists(client, parent, glossaryName, targetLanguage);
 
             for (PropertyEntry entry : entries) {
-                if (entry.isComment || entry.isEmptyLine) {
+                if (entry.type == EntryType.COMMENT || entry.type == EntryType.EMPTY_LINE) {
                     translatedEntries.add(entry);
                 } else {
                     try {
-                        PropertyEntry translatedEntry = new PropertyEntry(entry.key, false, false);
                         String fullValue = String.join("\n", entry.lines);
-                        String translatedValue = translateValueWithGlossary(client, parent, fullValue, targetLanguage, glossaryName);
+                        String translatedValue;
+                        if (glossaryExists) {
+                            translatedValue = translateValueWithGlossary(client, parent, fullValue, targetLanguage, glossaryName);
+                        } else {
+                            translatedValue = translateValueWithoutGlossary(client, parent, fullValue, targetLanguage);
+                        }
                         String[] translatedLines = translatedValue.split("\n");
-                        translatedEntry.lines.addAll(List.of(translatedLines));
-                        translatedEntry.trailingEmptyLines = entry.trailingEmptyLines;
-                        translatedEntries.add(translatedEntry);
+                        translatedEntries.add(new PropertyEntry(entry.key, Arrays.asList(translatedLines), EntryType.PROPERTY));
                     } catch (Exception e) {
                         System.err.println("Failed to translate property: " + entry.key + ". Error: " + e.getMessage());
                         translatedEntries.add(entry);
@@ -129,65 +133,97 @@ public class GoogleTranslateService {
         return translatedEntries;
     }
 
-    private void createGlossaryIfNotExists(TranslationServiceClient client, LocationName parent, String glossaryName) throws IOException {
+    private boolean createGlossaryIfNotExists(TranslationServiceClient client, LocationName parent, String glossaryName, String targetLanguage) {
         try {
-            // Attempt to get the glossary
             client.getGlossary(glossaryName);
             System.out.println("Glossary already exists: " + glossaryName);
+            return true;
         } catch (ApiException e) {
-            // Get the StatusCode.Code and compare it using ordinal or integer comparison
             StatusCode.Code statusCode = e.getStatusCode().getCode();
 
             if (statusCode == StatusCode.Code.NOT_FOUND) {
-                // Glossary not found, so attempt to create it
                 System.out.println("Glossary not found. Attempting to create glossary: " + glossaryName);
-                createGlossary(client, parent);
+                try {
+                    createGlossary(client, parent, targetLanguage);
+                    return true;
+                } catch (IOException createException) {
+                    System.err.println("Failed to create glossary: " + createException.getMessage());
+                    return false;
+                }
             } else {
-                // Handle other exceptions (e.g., permission issues)
-                throw new IOException("Error checking glossary: " + e.getMessage(), e);
+                System.err.println("Error checking glossary: " + e.getMessage());
+                return false;
             }
         }
     }
 
-
-
-    private void createGlossary(TranslationServiceClient client, LocationName parent) throws IOException {
-        String inputUri = "gs://" + BUCKET_NAME + "/" + GLOSSARY_FILE_NAME;
-
-        GlossaryInputConfig inputConfig = GlossaryInputConfig.newBuilder()
-                .setGcsSource(GcsSource.newBuilder().setInputUri(inputUri).build())
-                .build();
-
-        Glossary glossary = Glossary.newBuilder()
-                .setName(LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + GLOSSARY_ID)
-                .setLanguagePair(Glossary.LanguageCodePair.newBuilder()
-                        .setSourceLanguageCode("en")
-                        .setTargetLanguageCode("hi")
-                        .build())
-                .setInputConfig(inputConfig)
-                .build();
-
-        CreateGlossaryRequest request = CreateGlossaryRequest.newBuilder()
-                .setParent(parent.toString())
-                .setGlossary(glossary)
-                .build();
-
-        OperationFuture<Glossary, CreateGlossaryMetadata> future = client.createGlossaryAsync(request);
+    private void createGlossary(TranslationServiceClient client, LocationName parent, String targetLanguage) throws IOException {
 
         try {
+            // Construct LocationName
+            LocationName P = LocationName.of(PROJECT_ID, LOCATION);
+            System.out.println("Parent location: " + P);
+
+            // Construct input URI
+            String inputUri = "gs://" + BUCKET_NAME + "/" + GLOSSARY_FILE_NAME;
+            System.out.println("Input URI: " + inputUri);
+
+            // Validate target language
+            if (!isValidLanguageCode(targetLanguage)) {
+                throw new IllegalArgumentException("Invalid target language code: " + targetLanguage);
+            }
+
+            String glossaryId = "glossary-" + targetLanguage.toLowerCase();
+
+            GlossaryInputConfig inputConfig = GlossaryInputConfig.newBuilder()
+                    .setGcsSource(GcsSource.newBuilder().setInputUri(inputUri).build())
+                    .build();
+
+            Glossary glossary = Glossary.newBuilder()
+                    .setName(LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + glossaryId)
+                    .setLanguagePair(Glossary.LanguageCodePair.newBuilder()
+                            .setSourceLanguageCode("en")
+                            .setTargetLanguageCode(targetLanguage)
+                            .build())
+                    .setInputConfig(inputConfig)
+                    .build();
+
+            CreateGlossaryRequest request = CreateGlossaryRequest.newBuilder()
+                    .setParent(parent.toString())
+                    .setGlossary(glossary)
+                    .build();
+
+            System.out.println("Creating glossary with ID: " + glossaryId);
+            System.out.println("Source language: en");
+            System.out.println("Target language: " + targetLanguage);
+
+            OperationFuture<Glossary, CreateGlossaryMetadata> future = client.createGlossaryAsync(request);
             Glossary createdGlossary = future.get(5, TimeUnit.MINUTES);
             System.out.println("Created glossary: " + createdGlossary.getName());
         } catch (InterruptedException | ExecutionException | TimeoutException e) {
-            throw new IOException("Error creating glossary: " + e.getMessage(), e);
+            System.err.println("Error creating glossary: " + e.getMessage());
+            if (e.getCause() != null) {
+                System.err.println("Cause: " + e.getCause().getMessage());
+            }
+            e.printStackTrace();
+            throw new IOException("Error creating glossary", e);
+        } catch (ApiException e) {
+            System.err.println("ApiException during glossary creation: " + e.getMessage());
+            System.err.println("Error code: " + e.getStatusCode().getCode());
+            System.err.println("Error description: " + e.getStatusCode().toString());
+            e.printStackTrace();
+            throw new IOException("Error creating glossary", e);
         }
     }
 
+    private boolean isValidLanguageCode(String languageCode) {
+        return languageCode != null && languageCode.matches("^[a-zA-Z]{2,3}(-[a-zA-Z]{2,3})?$");
+    }
     private String translateValueWithGlossary(TranslationServiceClient client, LocationName parent, String value, String targetLanguage, String glossaryName) {
         int separatorIndex = value.indexOf('=');
         String key = value.substring(0, separatorIndex + 1);
         String contentToTranslate = value.substring(separatorIndex + 1);
 
-        // Remove line breaks and backslashes for translation
         String cleanContent = contentToTranslate.replaceAll("\\s*\\\\\n\\s*", " ").trim();
 
         TranslateTextGlossaryConfig glossaryConfig = TranslateTextGlossaryConfig.newBuilder()
@@ -206,8 +242,32 @@ public class GoogleTranslateService {
         TranslateTextResponse response = client.translateText(request);
         String translatedText = response.getGlossaryTranslations(0).getTranslatedText().trim();
 
-        // Reinsert line breaks and backslashes
-        String[] originalLines = contentToTranslate.split("\n");
+        return formatTranslatedText(key, contentToTranslate, translatedText);
+    }
+
+    private String translateValueWithoutGlossary(TranslationServiceClient client, LocationName parent, String value, String targetLanguage) {
+        int separatorIndex = value.indexOf('=');
+        String key = value.substring(0, separatorIndex + 1);
+        String contentToTranslate = value.substring(separatorIndex + 1);
+
+        String cleanContent = contentToTranslate.replaceAll("\\s*\\\\\n\\s*", " ").trim();
+
+        TranslateTextRequest request = TranslateTextRequest.newBuilder()
+                .setParent(parent.toString())
+                .setMimeType("text/plain")
+                .setSourceLanguageCode("en")
+                .setTargetLanguageCode(targetLanguage)
+                .addContents(cleanContent)
+                .build();
+
+        TranslateTextResponse response = client.translateText(request);
+        String translatedText = response.getTranslations(0).getTranslatedText().trim();
+
+        return formatTranslatedText(key, contentToTranslate, translatedText);
+    }
+
+    private String formatTranslatedText(String key, String originalContent, String translatedText) {
+        String[] originalLines = originalContent.split("\n");
         StringBuilder result = new StringBuilder(key);
         for (int i = 0; i < originalLines.length; i++) {
             String originalLine = originalLines[i].trim();
@@ -248,36 +308,38 @@ public class GoogleTranslateService {
     private static void writePropertiesUtf8(List<PropertyEntry> entries, String filename) throws IOException {
         try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(filename), StandardCharsets.UTF_8))) {
             for (PropertyEntry entry : entries) {
-                if (entry.isComment) {
-                    writer.write(entry.key);
-                    writer.newLine();
-                } else {
-                    for (String line : entry.lines) {
-                        writer.write(line);
-                        writer.newLine();
-                    }
-                }
-
-                // Add trailing empty lines
-                for (int j = 0; j < entry.trailingEmptyLines; j++) {
+                for (String line : entry.lines) {
+                    writer.write(line);
                     writer.newLine();
                 }
             }
         }
     }
 
-    public void deleteGlossary() throws IOException {
+    public void deleteGlossary(String targetLanguage) throws IOException {
         try (TranslationServiceClient client = TranslationServiceClient.create()) {
-            String glossaryName = LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + GLOSSARY_ID;
+            String glossaryId = "glossary-" + targetLanguage.toLowerCase();
+            String glossaryName = LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + glossaryId;
 
-            // Delete glossary
-            OperationFuture<DeleteGlossaryResponse, DeleteGlossaryMetadata> future = client.deleteGlossaryAsync(glossaryName);
+            System.out.println("Attempting to delete glossary: " + glossaryName);
 
             try {
+                OperationFuture<DeleteGlossaryResponse, DeleteGlossaryMetadata> future = client.deleteGlossaryAsync(glossaryName);
                 DeleteGlossaryResponse response = future.get(5, TimeUnit.MINUTES);
                 System.out.println("Deleted glossary: " + response.getName());
             } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                throw new IOException("Error deleting glossary: " + e.getMessage(), e);
+                if (e.getCause() instanceof ApiException) {
+                    ApiException apiException = (ApiException) e.getCause();
+                    if (apiException.getStatusCode().getCode() == StatusCode.Code.NOT_FOUND) {
+                        System.out.println("Glossary not found. No deletion required.");
+                    } else {
+                        System.err.println("Error deleting glossary: " + apiException.getMessage());
+                        throw new IOException("Error deleting glossary", apiException);
+                    }
+                } else {
+                    System.err.println("Error deleting glossary: " + e.getMessage());
+                    throw new IOException("Error deleting glossary", e);
+                }
             }
         } catch (Exception e) {
             throw new IOException("Error creating TranslationServiceClient: " + e.getMessage(), e);
@@ -300,8 +362,8 @@ public class GoogleTranslateService {
             GoogleTranslateService translator = new GoogleTranslateService();
 
             if (shouldDeleteGlossary) {
-                translator.deleteGlossary();
-                System.out.println("Glossary deleted successfully.");
+                translator.deleteGlossary(targetLanguage);
+                System.out.println("Glossary deletion attempt completed.");
                 return;
             }
 
@@ -314,7 +376,7 @@ public class GoogleTranslateService {
             writePropertiesUtf8(translatedEntries, outputPath.toString());
             System.out.println("Translation complete. Output file: " + outputPropsFile);
         } catch (IOException e) {
-            System.err.println("Error during process: " + e.getMessage());
+            System.err.println("Error during translation process: " + e.getMessage());
             e.printStackTrace();
             System.exit(1);
         }
