@@ -19,18 +19,35 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public class GoogleTranslateService {
-
-    private static final String PROJECT_ID = "translate-project-a-512";
-    private static final String LOCATION = "us-central1";
-    private static final String BUCKET_NAME = "glossaries11";
+    private final Properties config;
     private final String glossaryFileName;
 
-    public GoogleTranslateService(String targetLanguage) {
-        this.glossaryFileName = generateGlossaryFileName(targetLanguage);
+    public GoogleTranslateService(String targetLanguage) throws IOException {
+        this.config = loadConfig();
+        this.glossaryFileName = String.format(config.getProperty("glossary.file.format"), targetLanguage.toLowerCase());
     }
 
-    private String generateGlossaryFileName(String targetLanguage) {
-        return String.format("glossaries_%s.csv", targetLanguage.toLowerCase());
+    private Properties loadConfig() throws IOException {
+        Properties properties = new Properties();
+        try (InputStream input = getClass().getClassLoader().getResourceAsStream("application.properties")) {
+            if (input == null) {
+                throw new IOException("Unable to find application.properties");
+            }
+            properties.load(input);
+        }
+        return properties;
+    }
+
+    private String getProjectId() {
+        return config.getProperty("google.project.id");
+    }
+
+    private String getLocation() {
+        return config.getProperty("google.location");
+    }
+
+    private String getBucketName() {
+        return config.getProperty("google.bucket.name");
     }
 
     private static class PropertyEntry {
@@ -110,9 +127,9 @@ public class GoogleTranslateService {
         List<PropertyEntry> translatedEntries = new ArrayList<>();
 
         try (TranslationServiceClient client = TranslationServiceClient.create()) {
-            LocationName parent = LocationName.of(PROJECT_ID, LOCATION);
+            LocationName parent = LocationName.of(getProjectId(), getLocation());
             String glossaryId = "glossary-" + targetLanguage.toLowerCase();
-            String glossaryName = LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + glossaryId;
+            String glossaryName = LocationName.of(getProjectId(), getLocation()).toString() + "/glossaries/" + glossaryId;
 
             boolean glossaryExists = createGlossaryIfNotExists(client, parent, glossaryName, targetLanguage);
 
@@ -175,8 +192,8 @@ public class GoogleTranslateService {
 
     private boolean isLanguageInGlossaryFile(String targetLanguage) {
         try {
-            Storage storage = StorageOptions.newBuilder().setProjectId(PROJECT_ID).build().getService();
-            Blob blob = storage.get(BUCKET_NAME, this.glossaryFileName);
+            Storage storage = StorageOptions.newBuilder().setProjectId(getProjectId()).build().getService();
+            Blob blob = storage.get(getBucketName(), this.glossaryFileName);
 
             if (blob == null) {
                 System.err.println("Glossary file not found in Google Cloud Storage: " + this.glossaryFileName);
@@ -204,28 +221,32 @@ public class GoogleTranslateService {
 
     private void createGlossary(TranslationServiceClient client, LocationName parent, String targetLanguage) throws IOException {
         try {
-            LocationName P = LocationName.of(PROJECT_ID, LOCATION);
-            System.out.println("Parent location: " + P);
-
-            String inputUri = "gs://" + BUCKET_NAME + "/" + this.glossaryFileName;
+            String inputUri = String.format("gs://%s/%s", getBucketName(), this.glossaryFileName);
             System.out.println("Input URI: " + inputUri);
 
             if (!isValidLanguageCode(targetLanguage)) {
                 throw new IllegalArgumentException("Invalid target language code: " + targetLanguage);
             }
 
-            String glossaryId = "glossary-" + targetLanguage.toLowerCase();
+            String glossaryId = String.format(config.getProperty("glossary.name.format"), targetLanguage.toLowerCase());
+            String fullGlossaryName = LocationName.of(getProjectId(), getLocation()).toString() + "/glossaries/" + glossaryId;
+
+            GcsSource gcsSource = GcsSource.newBuilder()
+                    .setInputUri(inputUri)
+                    .build();
 
             GlossaryInputConfig inputConfig = GlossaryInputConfig.newBuilder()
-                    .setGcsSource(GcsSource.newBuilder().setInputUri(inputUri).build())
+                    .setGcsSource(gcsSource)
+                    .build();
+
+            Glossary.LanguageCodePair languageCodePair = Glossary.LanguageCodePair.newBuilder()
+                    .setSourceLanguageCode("en")
+                    .setTargetLanguageCode(targetLanguage)
                     .build();
 
             Glossary glossary = Glossary.newBuilder()
-                    .setName(LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + glossaryId)
-                    .setLanguagePair(Glossary.LanguageCodePair.newBuilder()
-                            .setSourceLanguageCode("en")
-                            .setTargetLanguageCode(targetLanguage)
-                            .build())
+                    .setName(fullGlossaryName)
+                    .setLanguagePair(languageCodePair)
                     .setInputConfig(inputConfig)
                     .build();
 
@@ -234,32 +255,100 @@ public class GoogleTranslateService {
                     .setGlossary(glossary)
                     .build();
 
-            System.out.println("Creating glossary with ID: " + glossaryId);
-            System.out.println("Source language: en");
-            System.out.println("Target language: " + targetLanguage);
+            System.out.println("Creating glossary with the following configuration:");
+            System.out.println("- Glossary ID: " + glossaryId);
+            System.out.println("- Source language: en");
+            System.out.println("- Target language: " + targetLanguage);
+            System.out.println("- Input URI: " + inputUri);
 
             OperationFuture<Glossary, CreateGlossaryMetadata> future = client.createGlossaryAsync(request);
-            Glossary createdGlossary = future.get(5, TimeUnit.MINUTES);
-            System.out.println("Created glossary: " + createdGlossary.getName());
-        } catch (InterruptedException | ExecutionException | TimeoutException e) {
-            System.err.println("Error creating glossary: " + e.getMessage());
-            if (e.getCause() != null) {
-                System.err.println("Cause: " + e.getCause().getMessage());
+
+            int timeoutMinutes = Integer.parseInt(config.getProperty("glossary.creation.timeout.minutes", "5"));
+            try {
+                Glossary createdGlossary = future.get(timeoutMinutes, TimeUnit.MINUTES);
+                System.out.println("Successfully created glossary: " + createdGlossary.getName());
+
+                verifyGlossaryCreation(client, createdGlossary.getName());
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Glossary creation was interrupted", e);
+            } catch (ExecutionException e) {
+                handleExecutionException(e);
+            } catch (TimeoutException e) {
+                future.cancel(true);
+                throw new IOException("Glossary creation timed out after " + timeoutMinutes + " minutes", e);
             }
-            e.printStackTrace();
-            throw new IOException("Error creating glossary", e);
+
         } catch (ApiException e) {
-            System.err.println("ApiException during glossary creation: " + e.getMessage());
-            System.err.println("Error code: " + e.getStatusCode().getCode());
-            System.err.println("Error description: " + e.getStatusCode().toString());
-            e.printStackTrace();
-            throw new IOException("Error creating glossary", e);
+            handleApiException(e);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid configuration: " + e.getMessage(), e);
+        } catch (Exception e) {
+            throw new IOException("Unexpected error during glossary creation: " + e.getMessage(), e);
+        }
+    }
+
+
+    private void handleExecutionException(ExecutionException e) throws IOException {
+        Throwable cause = e.getCause();
+        if (cause instanceof ApiException) {
+            ApiException apiException = (ApiException) cause;
+            handleApiException(apiException);
+        } else {
+            throw new IOException("Error during glossary creation", e);
+        }
+    }
+
+    private void handleApiException(ApiException e) throws IOException {
+        StatusCode.Code code = e.getStatusCode().getCode();
+        String message = String.format("API error during glossary creation (Code: %s): %s",
+                code, e.getMessage());
+
+        switch (code) {
+            case ALREADY_EXISTS:
+                System.out.println("Glossary already exists. Proceeding with existing glossary.");
+                break;
+            case INVALID_ARGUMENT:
+                throw new IOException("Invalid glossary configuration: " + e.getMessage(), e);
+            case PERMISSION_DENIED:
+                throw new IOException("Permission denied. Please check your credentials and project permissions.", e);
+            case NOT_FOUND:
+                throw new IOException("Resource not found. Please check if the glossary file exists in the GCS bucket.", e);
+            case RESOURCE_EXHAUSTED:
+                throw new IOException("Resource quota exceeded. Please try again later.", e);
+            default:
+                throw new IOException(message, e);
+        }
+    }
+
+    private void verifyGlossaryCreation(TranslationServiceClient client, String glossaryName) throws IOException {
+        try {
+            Glossary glossary = client.getGlossary(glossaryName);
+            if (glossary == null) {
+                throw new IOException("Glossary was created but cannot be retrieved");
+            }
+
+            System.out.println("Verified glossary creation:");
+            System.out.println("- Name: " + glossary.getName());
+            System.out.println("- Entry count: " + glossary.getEntryCount());
+            System.out.println("- Submit time: " + glossary.getSubmitTime());
+        } catch (ApiException e) {
+            throw new IOException("Failed to verify glossary creation: " + e.getMessage(), e);
         }
     }
 
     private boolean isValidLanguageCode(String languageCode) {
-        return languageCode != null && languageCode.matches("^[a-zA-Z]{2,3}(-[a-zA-Z]{2,3})?$");
+        if (languageCode == null || languageCode.isEmpty()) {
+            return false;
+        }
+
+        String languagePattern = "^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$";
+
+        return languageCode.matches(languagePattern);
     }
+
+
     private String translateValueWithGlossary(TranslationServiceClient client, LocationName parent, String value, String targetLanguage, String glossaryName) {
         int separatorIndex = value.indexOf('=');
         String key = value.substring(0, separatorIndex + 1);
@@ -360,7 +449,7 @@ public class GoogleTranslateService {
     public void deleteGlossary(String targetLanguage) throws IOException {
         try (TranslationServiceClient client = TranslationServiceClient.create()) {
             String glossaryId = "glossary-" + targetLanguage.toLowerCase();
-            String glossaryName = LocationName.of(PROJECT_ID, LOCATION).toString() + "/glossaries/" + glossaryId;
+            String glossaryName = LocationName.of(getProjectId(), getLocation()).toString() + "/glossaries/" + glossaryId;
 
             System.out.println("Attempting to delete glossary: " + glossaryName);
 
@@ -396,17 +485,18 @@ public class GoogleTranslateService {
         String targetLanguage = args[0];
         boolean shouldDeleteGlossary = args.length == 2 && args[1].equalsIgnoreCase("deleteGlossary");
 
-        String inputPropsFile = "src/main/resources/messages_en.properties";
-        String outputPropsFile = "src/main/resources/messages_" + targetLanguage + ".properties";
-
         try {
             GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+            Properties config = translator.config;
 
             if (shouldDeleteGlossary) {
                 translator.deleteGlossary(targetLanguage);
                 System.out.println("Glossary deletion attempt completed.");
                 return;
             }
+
+            String inputPropsFile = config.getProperty("file.input.path");
+            String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
 
             List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
             List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
