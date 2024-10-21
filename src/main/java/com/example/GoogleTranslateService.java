@@ -8,7 +8,6 @@ import com.google.cloud.translate.v3.*;
 import com.google.cloud.storage.Blob;
 import com.google.cloud.storage.Storage;
 import com.google.cloud.storage.StorageOptions;
-
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,7 +23,15 @@ public class GoogleTranslateService {
     private static final String PROJECT_ID = "translate-project-a-512";
     private static final String LOCATION = "us-central1";
     private static final String BUCKET_NAME = "glossaries11";
-    private static final String GLOSSARY_FILE_NAME = "glossaries1.csv";
+    private final String glossaryFileName;
+
+    public GoogleTranslateService(String targetLanguage) {
+        this.glossaryFileName = generateGlossaryFileName(targetLanguage);
+    }
+
+    private String generateGlossaryFileName(String targetLanguage) {
+        return String.format("glossaries_%s.csv", targetLanguage.toLowerCase());
+    }
 
     private static class PropertyEntry {
         String key;
@@ -169,10 +176,10 @@ public class GoogleTranslateService {
     private boolean isLanguageInGlossaryFile(String targetLanguage) {
         try {
             Storage storage = StorageOptions.newBuilder().setProjectId(PROJECT_ID).build().getService();
-            Blob blob = storage.get(BUCKET_NAME, GLOSSARY_FILE_NAME);
+            Blob blob = storage.get(BUCKET_NAME, this.glossaryFileName);
 
             if (blob == null) {
-                System.err.println("Glossary file not found in Google Cloud Storage");
+                System.err.println("Glossary file not found in Google Cloud Storage: " + this.glossaryFileName);
                 return false;
             }
 
@@ -196,17 +203,13 @@ public class GoogleTranslateService {
     }
 
     private void createGlossary(TranslationServiceClient client, LocationName parent, String targetLanguage) throws IOException {
-
         try {
-            // Construct LocationName
             LocationName P = LocationName.of(PROJECT_ID, LOCATION);
             System.out.println("Parent location: " + P);
 
-            // Construct input URI
-            String inputUri = "gs://" + BUCKET_NAME + "/" + GLOSSARY_FILE_NAME;
+            String inputUri = "gs://" + BUCKET_NAME + "/" + this.glossaryFileName;
             System.out.println("Input URI: " + inputUri);
 
-            // Validate target language
             if (!isValidLanguageCode(targetLanguage)) {
                 throw new IllegalArgumentException("Invalid target language code: " + targetLanguage);
             }
@@ -393,11 +396,11 @@ public class GoogleTranslateService {
         String targetLanguage = args[0];
         boolean shouldDeleteGlossary = args.length == 2 && args[1].equalsIgnoreCase("deleteGlossary");
 
-        String inputPropsFile = "src/main/resources/application.properties";
-        String outputPropsFile = "src/main/resources/application_" + targetLanguage + ".properties";
+        String inputPropsFile = "src/main/resources/messages_en.properties";
+        String outputPropsFile = "src/main/resources/messages_" + targetLanguage + ".properties";
 
         try {
-            GoogleTranslateService translator = new GoogleTranslateService();
+            GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
 
             if (shouldDeleteGlossary) {
                 translator.deleteGlossary(targetLanguage);
