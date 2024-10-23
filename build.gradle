@@ -65,12 +65,12 @@ tasks.register('translateProperties', JavaExec) {
             throw new GradleException("Target languages not specified. Use -PtargetLanguages=<language_code1,language_code2,...>")
         }
 
-//        def credentialsPath = getCredentialsPath()
-//        environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
-//
-//        if (!file(credentialsPath).exists()) {
-//            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
-//        }
+        def credentialsPath = getCredentialsPath()
+        environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
+
+        if (!file(credentialsPath).exists()) {
+            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
+        }
 
         args = targetLanguages.split(',').toList()
     }
@@ -90,12 +90,12 @@ tasks.register('runJar', JavaExec) {
             throw new GradleException("Target languages not specified. Use -PtargetLanguages=<language_code1,language_code2,...>")
         }
 
-//        def credentialsPath = getCredentialsPath()
-//        environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
-//
-//        if (!file(credentialsPath).exists()) {
-//            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
-//        }
+        def credentialsPath = getCredentialsPath()
+        environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
+
+        if (!file(credentialsPath).exists()) {
+            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
+        }
 
         args = targetLanguages.split(',').toList()
     }
