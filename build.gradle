@@ -47,8 +47,17 @@ shadowJar {
 
 def getCredentialsPath() {
     def envCreds = System.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-    if (envCreds) return envCreds
+    if (envCreds) {
+        def credsFile = file(envCreds)
+        if (credsFile.exists()) {
+            return envCreds
+        }
+        // If the path exists but doesn't point to an existing file,
+        // assume it's a relative path from the project directory
+        return file(envCreds).absolutePath
+    }
 
+    // Default path for local development
     def defaultPath = '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
     return defaultPath
 }
@@ -69,10 +78,18 @@ tasks.register('translateProperties', JavaExec) {
         environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
 
         if (!file(credentialsPath).exists()) {
-            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
+            throw new GradleException("Google credentials file not found at: ${credentialsPath}. Working directory: ${projectDir}")
         }
 
-        args = targetLanguages.split(',').toList()
+        // Add validation for target languages format
+        def languages = targetLanguages.split(',').toList()
+        languages.each { lang ->
+            if (!lang.matches('^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$')) {
+                throw new GradleException("Invalid language code format: ${lang}")
+            }
+        }
+
+        args = languages
     }
 
     systemProperty "file.encoding", "UTF-8"
@@ -94,10 +111,18 @@ tasks.register('runJar', JavaExec) {
         environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
 
         if (!file(credentialsPath).exists()) {
-            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
+            throw new GradleException("Google credentials file not found at: ${credentialsPath}. Working directory: ${projectDir}")
         }
 
-        args = targetLanguages.split(',').toList()
+        // Add validation for target languages format
+        def languages = targetLanguages.split(',').toList()
+        languages.each { lang ->
+            if (!lang.matches('^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$')) {
+                throw new GradleException("Invalid language code format: ${lang}")
+            }
+        }
+
+        args = languages
     }
 
     systemProperty "file.encoding", "UTF-8"
