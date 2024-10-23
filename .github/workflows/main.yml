@@ -1,0 +1,67 @@
+name: Translate Properties
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/main/resources/messages_en.properties'
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout DTMmock Repository
+        uses: actions/checkout@v3
+        with:
+          repository: Ashutoshk-DigiCert/DTMmock
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+          path: dtmmock
+
+      - name: Checkout GoogleTranslatePOC Repository
+        uses: actions/checkout@v3
+        with:
+          repository: Ashutoshk-DigiCert/GoogleTranslatePOC
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+          path: translator
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Setup Google Cloud Credentials
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$PWD/google-credentials.json" >> $GITHUB_ENV
+
+      - name: Copy Source Properties File
+        run: |
+          mkdir -p translator/src/main/resources
+          cp dtmmock/src/main/resources/messages_en.properties translator/src/main/resources/
+
+      - name: Build and Run Translator
+        run: |
+          cd translator
+          ./mvnw clean package
+          java -jar target/google-translate-1.0-SNAPSHOT.jar fr de es hi
+
+      - name: Copy Translated Files
+        run: |
+          cp translator/src/main/resources/messages_*.properties dtmmock/src/main/resources/
+
+      - name: Commit and Push Changes
+        run: |
+          cd dtmmock
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/main/resources/messages_*.properties
+          git commit -m "Update translated properties files [skip ci]" || echo "No changes to commit"
+          git push origin main
+        env:
+          WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
