@@ -22,6 +22,8 @@ dependencies {
     implementation 'com.google.cloud:google-cloud-translate:2.49.0'
     implementation 'com.google.auth:google-auth-library-oauth2-http:1.16.0'
     implementation 'com.google.cloud:google-cloud-storage:2.19.0'
+    implementation 'org.slf4j:slf4j-api:1.7.32'
+    implementation 'ch.qos.logback:logback-classic:1.2.6'
 }
 
 application {
@@ -43,25 +45,36 @@ shadowJar {
     }
 }
 
+def getCredentialsPath() {
+    def envCreds = System.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+    if (envCreds) return envCreds
+
+    def defaultPath = '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
+    return defaultPath
+}
+
 tasks.register('translateProperties', JavaExec) {
     group = 'Translation'
-    description = 'Translates application.properties file to target language or deletes glossary'
+    description = 'Translates application.properties file to target languages'
     mainClass = 'com.example.GoogleTranslateService'
     classpath = sourceSets.main.runtimeClasspath
+
     doFirst {
-        def targetLanguage = project.findProperty('targetLanguage')
-        def deleteGlossary = project.hasProperty('deleteGlossary')
-        if (targetLanguage == null) {
-            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language.")
+        def targetLanguages = project.findProperty('targetLanguages')
+        if (!targetLanguages) {
+            throw new GradleException("Target languages not specified. Use -PtargetLanguages=<language_code1,language_code2,...>")
         }
-        if (System.getenv('GOOGLE_APPLICATION_CREDENTIALS') == null) {
-            environment 'GOOGLE_APPLICATION_CREDENTIALS', '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
-            if (System.getenv('GOOGLE_APPLICATION_CREDENTIALS') == null) {
-                throw new GradleException("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.")
-            }
+
+        def credentialsPath = getCredentialsPath()
+        environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
+
+        if (!file(credentialsPath).exists()) {
+            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
         }
-        args = deleteGlossary ? [targetLanguage, 'deleteGlossary'] : [targetLanguage]
+
+        args = targetLanguages.split(',').toList()
     }
+
     systemProperty "file.encoding", "UTF-8"
     jvmArgs '-Dfile.encoding=UTF-8'
 }
@@ -70,17 +83,23 @@ tasks.register('runJar', JavaExec) {
     group = 'Execution'
     description = 'Runs the shaded JAR file with specified arguments'
     classpath = files(tasks.shadowJar)
+
     doFirst {
-        def targetLanguage = project.findProperty('targetLanguage')
-        def deleteGlossary = project.hasProperty('deleteGlossary')
-        if (targetLanguage == null) {
-            throw new GradleException("Target language not specified. Use -PtargetLanguage=<language_code> to specify the language.")
+        def targetLanguages = project.findProperty('targetLanguages')
+        if (!targetLanguages) {
+            throw new GradleException("Target languages not specified. Use -PtargetLanguages=<language_code1,language_code2,...>")
         }
-        if (System.getenv('GOOGLE_CREDENTIALS') == null) {
-            environment 'GOOGLE_CREDENTIALS', '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
+
+        def credentialsPath = getCredentialsPath()
+        environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
+
+        if (!file(credentialsPath).exists()) {
+            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
         }
-        args = deleteGlossary ? [targetLanguage, 'deleteGlossary'] : [targetLanguage]
+
+        args = targetLanguages.split(',').toList()
     }
+
     systemProperty "file.encoding", "UTF-8"
     jvmArgs '-Dfile.encoding=UTF-8'
 }

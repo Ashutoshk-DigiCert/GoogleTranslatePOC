@@ -477,35 +477,30 @@ public class GoogleTranslateService {
     }
 
     public static void main(String[] args) {
-        if (args.length < 1 || args.length > 2) {
-            System.err.println("Usage: java GoogleTranslateService <targetLanguage> [deleteGlossary]");
+        if (args.length < 1) {
+            System.err.println("Usage: java GoogleTranslateService <targetLanguage1> <targetLanguage2> ...");
             System.exit(1);
         }
 
-        String targetLanguage = args[0];
-        boolean shouldDeleteGlossary = args.length == 2 && args[1].equalsIgnoreCase("deleteGlossary");
+        List<String> targetLanguages = Arrays.asList(args);
 
         try {
-            GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
-            Properties config = translator.config;
+            for (String targetLanguage : targetLanguages) {
+                GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+                Properties config = translator.config;
 
-            if (shouldDeleteGlossary) {
-                translator.deleteGlossary(targetLanguage);
-                System.out.println("Glossary deletion attempt completed.");
-                return;
+                String inputPropsFile = config.getProperty("file.input.path");
+                String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
+
+                List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
+                List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
+
+                Path outputPath = Paths.get(outputPropsFile);
+                Files.createDirectories(outputPath.getParent());
+
+                writePropertiesUtf8(translatedEntries, outputPath.toString());
+                System.out.println("Translation complete for " + targetLanguage + ". Output file: " + outputPropsFile);
             }
-
-            String inputPropsFile = config.getProperty("file.input.path");
-            String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
-
-            List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
-            List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
-
-            Path outputPath = Paths.get(outputPropsFile);
-            Files.createDirectories(outputPath.getParent());
-
-            writePropertiesUtf8(translatedEntries, outputPath.toString());
-            System.out.println("Translation complete. Output file: " + outputPropsFile);
         } catch (IOException e) {
             System.err.println("Error during translation process: " + e.getMessage());
             e.printStackTrace();
