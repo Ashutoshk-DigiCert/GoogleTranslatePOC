@@ -114,7 +114,6 @@ tasks.register('runJar', JavaExec) {
             throw new GradleException("Google credentials file not found at: ${credentialsPath}. Working directory: ${projectDir}")
         }
 
-        // Add validation for target languages format
         def languages = targetLanguages.split(',').toList()
         languages.each { lang ->
             if (!lang.matches('^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$')) {
