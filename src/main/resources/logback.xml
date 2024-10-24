@@ -16,12 +16,12 @@
         </encoder>
     </appender>
 
-    <root level="DEBUG">
+    <root level="INFO">
         <appender-ref ref="FILE" />
         <appender-ref ref="CONSOLE" />
     </root>
 
-    <logger name="com.example.GoogleTranslateService" level="DEBUG">
+    <logger name="com.example.GoogleTranslateService" level="INFO">
         <appender-ref ref="FILE" />
         <appender-ref ref="CONSOLE" />
     </logger>
