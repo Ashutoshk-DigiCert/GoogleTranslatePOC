@@ -1,4 +1,5 @@
 <configuration>
+    <!-- File appender for storing debug level logs -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>logs/translate-service.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
@@ -6,25 +7,30 @@
             <maxHistory>30</maxHistory>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
+    <!-- Console appender for info level logs -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <root level="INFO">
+    <!-- Root logger configuration -->
+    <root level="DEBUG">
         <appender-ref ref="FILE" />
-        <appender-ref ref="CONSOLE" />
     </root>
 
+    <!-- Logger for com.example.GoogleTranslateService -->
     <logger name="com.example.GoogleTranslateService" level="INFO">
         <appender-ref ref="FILE" />
         <appender-ref ref="CONSOLE" />
     </logger>
 
-    <logger name="CONSOLE" level="INFO" />
+    <!-- Logger for console, only info level logs -->
+    <logger name="CONSOLE" level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </logger>
 </configuration>

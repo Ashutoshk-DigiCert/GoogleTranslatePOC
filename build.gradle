@@ -127,3 +127,36 @@ tasks.register('runJar', JavaExec) {
     systemProperty "file.encoding", "UTF-8"
     jvmArgs '-Dfile.encoding=UTF-8'
 }
+
+tasks.register('deleteGlossaries', JavaExec) {
+    group = 'Translation'
+    description = 'Deletes glossaries for specified target languages'
+    mainClass = 'com.example.GoogleTranslateService'
+    classpath = sourceSets.main.runtimeClasspath
+
+    doFirst {
+        def targetLanguages = project.findProperty('targetLanguages')
+        if (!targetLanguages) {
+            throw new GradleException("Target languages not specified. Use -PtargetLanguages=<language_code1,language_code2,...>")
+        }
+
+        def credentialsPath = getCredentialsPath()
+        environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
+
+        if (!file(credentialsPath).exists()) {
+            throw new GradleException("Google credentials file not found at: ${credentialsPath}. Working directory: ${projectDir}")
+        }
+
+        def languages = targetLanguages.split(',').toList()
+        languages.each { lang ->
+            if (!lang.matches('^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$')) {
+                throw new GradleException("Invalid language code format: ${lang}")
+            }
+        }
+
+        args = languages + ['deleteGlossary']
+    }
+
+    systemProperty "file.encoding", "UTF-8"
+    jvmArgs '-Dfile.encoding=UTF-8'
+}

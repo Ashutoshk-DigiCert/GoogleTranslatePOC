@@ -51,7 +51,7 @@ public class GoogleTranslateService {
         logger.info("Initializing GoogleTranslateService for target language: {}", targetLanguage);
         this.config = loadConfig();
         this.glossaryFileName = String.format(config.getProperty("glossary.file.format"), targetLanguage.toLowerCase());
-        logger.debug("Glossary file name set to: {}", glossaryFileName);
+        logger.info("Glossary file name set to: {}", glossaryFileName);
     }
 
     private static void writePropertiesUtf8(List<PropertyEntry> entries, String filename) throws IOException {
@@ -74,42 +74,54 @@ public class GoogleTranslateService {
         logger.info("Starting Google Translate Service");
         if (args.length < 1) {
             logger.error("No target languages provided");
-            System.err.println("Usage: java GoogleTranslateService <targetLanguage1> <targetLanguage2> ...");
+            logger.error("Usage: java GoogleTranslateService <targetLanguage1> <targetLanguage2> ... [deleteGlossary]");
             System.exit(1);
         }
 
-        List<String> targetLanguages = Arrays.asList(args);
-        logger.info("Processing translations for languages: {}", targetLanguages);
+        List<String> targetLanguages = new ArrayList<>(Arrays.asList(args));
+        boolean shouldDeleteGlossary = targetLanguages.remove("deleteGlossary");
 
-        try {
+        if (shouldDeleteGlossary) {
             for (String targetLanguage : targetLanguages) {
-                logger.info("Processing translation for language: {}", targetLanguage);
-                GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
-                Properties config = translator.config;
-
-                String inputPropsFile = config.getProperty("file.input.path");
-                String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
-
-                logger.info("Reading source properties from: {}", inputPropsFile);
-                List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
-
-                logger.info("Starting translation process for {} entries", originalEntries.size());
-                List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
-
-                Path outputPath = Paths.get(outputPropsFile);
-                Files.createDirectories(outputPath.getParent());
-
-                logger.info("Writing translated properties to: {}", outputPropsFile);
-                writePropertiesUtf8(translatedEntries, outputPath.toString());
-                logger.info("Successfully completed translation for language: {}", targetLanguage);
+                try {
+                    GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+                    translator.deleteGlossary(targetLanguage);
+                    logger.info("Glossary deletion attempt completed for language: {}", targetLanguage);
+                } catch (IOException e) {
+                    logger.error("Error deleting glossary for language {}: {}", targetLanguage, e.getMessage(), e);
+                }
             }
-            logger.info("Translation process completed successfully for all languages");
-        } catch (IOException e) {
-            logger.error("Fatal error during translation process: {}", e.getMessage(), e);
-            System.err.println("Error during translation process: " + e.getMessage());
-            e.printStackTrace();
-            System.exit(1);
+        } else {
+            for (String targetLanguage : targetLanguages) {
+                try {
+                    logger.info("Processing translation for language: {}", targetLanguage);
+                    GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+                    Properties config = translator.config;
+
+                    String inputPropsFile = config.getProperty("file.input.path");
+                    String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
+
+                    logger.info("Reading source properties from: {}", inputPropsFile);
+                    List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
+
+                    logger.info("Starting translation process for {} entries", originalEntries.size());
+                    List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
+
+                    Path outputPath = Paths.get(outputPropsFile);
+                    Files.createDirectories(outputPath.getParent());
+
+                    logger.info("Writing translated properties to: {}", outputPropsFile);
+                    writePropertiesUtf8(translatedEntries, outputPath.toString());
+                    logger.info("Successfully completed translation for language: {}", targetLanguage);
+                } catch (IOException e) {
+                    logger.error("Fatal error during translation process for language {}: {}", targetLanguage, e.getMessage(), e);
+                    logger.error("Error during translation process:{} " , e.getMessage());
+                    e.printStackTrace();
+                    System.exit(1);
+                }
+            }
         }
+        logger.info("Translation process completed successfully for all languages");
     }
 
     private Properties loadConfig() throws IOException {
@@ -121,7 +133,7 @@ public class GoogleTranslateService {
                 throw new IOException("Unable to find application.properties");
             }
             properties.load(input);
-            logger.info("Successfully loaded configuration properties");
+            logger.debug("Successfully loaded configuration properties");
             return properties;
         } catch (IOException e) {
             logger.error("Error loading configuration: {}", e.getMessage(), e);
@@ -201,9 +213,8 @@ public class GoogleTranslateService {
             throw new IOException("Environment variable GOOGLE_APPLICATION_CREDENTIALS is not set");
         }
 
-        GoogleCredentials credentials;
         try (FileInputStream credentialsStream = new FileInputStream(credentialsPath)) {
-            credentials = GoogleCredentials.fromStream(credentialsStream);
+            GoogleCredentials credentials = GoogleCredentials.fromStream(credentialsStream);
             logger.debug("Successfully loaded Google credentials from: {}", credentialsPath);
         }
 
