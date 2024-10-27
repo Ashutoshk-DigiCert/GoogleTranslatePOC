@@ -1,11 +1,11 @@
-name: Update Glossaries
+name: Update glossaries
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'src/main/resources/Glossaries/**'  # Monitor glossary files
+      - 'src/main/resources/glossaries/**'  # Monitor glossary files
 
 jobs:
   update-glossaries:
@@ -30,7 +30,7 @@ jobs:
           gradle wrapper
           chmod +x gradlew
 
-      - name: Update Glossaries
+      - name: Update glossaries
         run: |
           ./gradlew updateGlossary -PtargetLanguages=de,fr,it
         env:
