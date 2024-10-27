@@ -6,6 +6,7 @@ import com.google.api.gax.rpc.StatusCode;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.storage.Blob;
 import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageException;
 import com.google.cloud.storage.StorageOptions;
 import com.google.cloud.translate.v3.CreateGlossaryMetadata;
 import com.google.cloud.translate.v3.CreateGlossaryRequest;
@@ -21,6 +22,10 @@ import com.google.cloud.translate.v3.TranslateTextResponse;
 import com.google.cloud.translate.v3.TranslationServiceClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.google.cloud.storage.BlobId;
+import com.google.cloud.storage.BlobInfo;
+import com.google.cloud.storage.Storage.BlobTargetOption.*;
+import com.google.cloud.storage.StorageOptions;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -73,55 +78,102 @@ public class GoogleTranslateService {
     public static void main(String[] args) {
         logger.info("Starting Google Translate Service");
         if (args.length < 1) {
-            logger.error("No target languages provided");
+            logger.error("No arguments provided");
             logger.error("Usage: java GoogleTranslateService <targetLanguage1> <targetLanguage2> ... [deleteGlossary]");
+            logger.error("   or: java GoogleTranslateService <targetLanguage> updateGlossary <glossaryPath>");
             System.exit(1);
         }
 
-        List<String> targetLanguages = new ArrayList<>(Arrays.asList(args));
-        boolean shouldDeleteGlossary = targetLanguages.remove("deleteGlossary");
+        try {
+            // Process args in groups of 3 for updateGlossary command
+            if (args.length >= 3 && args[1].equals("updateGlossary")) {
+                processMultipleGlossaryUpdates(args);
+            } else {
+                // Handle normal translation or deletion command (existing functionality)
+                List<String> targetLanguages = new ArrayList<>(Arrays.asList(args));
+                boolean shouldDeleteGlossary = targetLanguages.remove("deleteGlossary");
 
-        if (shouldDeleteGlossary) {
-            for (String targetLanguage : targetLanguages) {
-                try {
-                    GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
-                    translator.deleteGlossary(targetLanguage);
-                    logger.info("Glossary deletion attempt completed for language: {}", targetLanguage);
-                } catch (IOException e) {
-                    logger.error("Error deleting glossary for language {}: {}", targetLanguage, e.getMessage(), e);
+                if (shouldDeleteGlossary) {
+                    for (String targetLanguage : targetLanguages) {
+                        try {
+                            GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+                            translator.deleteGlossary(targetLanguage);
+                            logger.info("Glossary deletion attempt completed for language: {}", targetLanguage);
+                        } catch (IOException e) {
+                            logger.error("Error deleting glossary for language {}: {}", targetLanguage, e.getMessage(), e);
+                        }
+                    }
+                } else {
+                    for (String targetLanguage : targetLanguages) {
+                        try {
+                            logger.info("Processing translation for language: {}", targetLanguage);
+                            GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+                            Properties config = translator.config;
+
+                            String inputPropsFile = config.getProperty("file.input.path");
+                            String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
+
+                            logger.info("Reading source properties from: {}", inputPropsFile);
+                            List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
+
+                            if (originalEntries.isEmpty()) {
+                                logger.warn("No entries found in the source properties file: {}. Skipping translation for language: {}", inputPropsFile, targetLanguage);
+                                continue;
+                            }
+
+                            logger.info("Starting translation process for {} entries", originalEntries.size());
+                            List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
+
+                            Path outputPath = Paths.get(outputPropsFile);
+                            Files.createDirectories(outputPath.getParent());
+
+                            logger.info("Writing translated properties to: {}", outputPropsFile);
+                            writePropertiesUtf8(translatedEntries, outputPath.toString());
+                            logger.info("Successfully completed translation for language: {}", targetLanguage);
+                        } catch (IOException e) {
+                            logger.error("Fatal error during translation process for language {}: {}", targetLanguage, e.getMessage(), e);
+                            logger.error("Error during translation process:{} ", e.getMessage());
+                            e.printStackTrace();
+                            System.exit(1);
+                        }
+                    }
                 }
             }
-        } else {
-            for (String targetLanguage : targetLanguages) {
-                try {
-                    logger.info("Processing translation for language: {}", targetLanguage);
-                    GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
-                    Properties config = translator.config;
+        } catch (Exception e) {
+            logger.error("Fatal error during execution: {}", e.getMessage(), e);
+            System.exit(1);
+        }
+    }
 
-                    String inputPropsFile = config.getProperty("file.input.path");
-                    String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
+    private static void processMultipleGlossaryUpdates(String[] args) {
+        logger.info("Processing multiple glossary updates");
 
-                    logger.info("Reading source properties from: {}", inputPropsFile);
-                    List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
+        // Process args in groups of 3 (targetLanguage, "updateGlossary", glossaryPath)
+        for (int i = 0; i < args.length; i += 3) {
+            if (i + 2 >= args.length) {
+                logger.error("Incomplete arguments for glossary update at position {}", i);
+                continue;
+            }
 
-                    logger.info("Starting translation process for {} entries", originalEntries.size());
-                    List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
+            String targetLanguage = args[i];
+            String command = args[i + 1];
+            String glossaryPath = args[i + 2];
 
-                    Path outputPath = Paths.get(outputPropsFile);
-                    Files.createDirectories(outputPath.getParent());
+            if (!"updateGlossary".equals(command)) {
+                logger.error("Invalid command '{}' for language {}. Expected 'updateGlossary'", command, targetLanguage);
+                continue;
+            }
 
-                    logger.info("Writing translated properties to: {}", outputPropsFile);
-                    writePropertiesUtf8(translatedEntries, outputPath.toString());
-                    logger.info("Successfully completed translation for language: {}", targetLanguage);
-                } catch (IOException e) {
-                    logger.error("Fatal error during translation process for language {}: {}", targetLanguage, e.getMessage(), e);
-                    logger.error("Error during translation process:{} " , e.getMessage());
-                    e.printStackTrace();
-                    System.exit(1);
-                }
+            try {
+                logger.info("Processing glossary update for language: {} with file: {}", targetLanguage, glossaryPath);
+                GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+                translator.processGlossaryUpdate(glossaryPath, targetLanguage);
+                logger.info("Successfully completed glossary update for language: {}", targetLanguage);
+            } catch (IOException e) {
+                logger.error("Error updating glossary for language {}: {}", targetLanguage, e.getMessage(), e);
+                // Continue processing other languages even if one fails
             }
         }
-        logger.info("Translation process completed successfully for all languages");
     }
 
     private Properties loadConfig() throws IOException {
@@ -156,6 +208,13 @@ public class GoogleTranslateService {
     private List<PropertyEntry> readPropertiesFile(String inputFile) throws IOException {
         logger.info("Reading properties file: {}", inputFile);
         List<PropertyEntry> entries = new ArrayList<>();
+        Path inputPath = Paths.get(inputFile);
+
+        if (!Files.exists(inputPath)) {
+            logger.warn("Source properties file does not exist: {}. Please add the source file.", inputFile);
+            return entries;
+        }
+
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(inputFile), StandardCharsets.UTF_8))) {
             String line;
             List<String> currentLines = new ArrayList<>();
@@ -601,6 +660,75 @@ public class GoogleTranslateService {
         } catch (Exception e) {
             logger.error("Error creating TranslationServiceClient: {}", e.getMessage(), e);
             throw new IOException("Error creating TranslationServiceClient: " + e.getMessage(), e);
+        }
+    }
+
+    private void uploadGlossaryToCloudStorage(String filePath, String targetLanguage) throws IOException {
+        logger.info("Uploading glossary file to Cloud Storage for language: {}", targetLanguage);
+
+        try {
+            Storage storage = StorageOptions.newBuilder()
+                    .setProjectId(getProjectId())
+                    .build()
+                    .getService();
+
+            String glossaryFileName = String.format(config.getProperty("glossary.file.format"), targetLanguage.toLowerCase());
+            BlobId blobId = BlobId.of(getBucketName(), glossaryFileName);
+            BlobInfo blobInfo = BlobInfo.newBuilder(blobId)
+                    .setContentType("text/csv")
+                    .build();
+
+            // Read the file content
+            Path path = Paths.get(filePath);
+            byte[] content = Files.readAllBytes(path);
+
+            // Upload to GCS without any preconditions
+            Blob blob = storage.create(blobInfo, content);
+
+            // Verify upload
+            if (blob == null || !blob.exists()) {
+                throw new IOException("Failed to verify uploaded file in Cloud Storage");
+            }
+
+            logger.info("Successfully uploaded glossary file {} to bucket {}", glossaryFileName, getBucketName());
+
+        } catch (StorageException e) {
+            logger.error("Error uploading glossary file to Cloud Storage: {}", e.getMessage(), e);
+            throw new IOException("Failed to upload glossary file to Cloud Storage: " + e.getMessage(), e);
+        }
+    }
+
+    public void processGlossaryUpdate(String glossaryFilePath, String targetLanguage) throws IOException {
+        logger.info("Processing glossary update for language: {}", targetLanguage);
+
+        try {
+            // Step 1: Upload the updated glossary file
+            logger.info("Step 1: Uploading glossary file: {}", glossaryFilePath);
+            uploadGlossaryToCloudStorage(glossaryFilePath, targetLanguage);
+
+            // Step 2: Delete the existing glossary if it exists
+            logger.info("Step 2: Deleting existing glossary for language: {}", targetLanguage);
+            try {
+                deleteGlossary(targetLanguage);
+            } catch (IOException e) {
+                if (e.getMessage().contains("NOT_FOUND")) {
+                    logger.info("No existing glossary found to delete. Proceeding with creation.");
+                } else {
+                    throw e;
+                }
+            }
+
+            // Step 3: Create new glossary
+            logger.info("Step 3: Creating new glossary for language: {}", targetLanguage);
+            try (TranslationServiceClient client = TranslationServiceClient.create()) {
+                LocationName parent = LocationName.of(getProjectId(), getLocation());
+                createGlossary(client, parent, targetLanguage);
+            }
+
+            logger.info("Successfully processed glossary update for language: {}", targetLanguage);
+        } catch (Exception e) {
+            logger.error("Error processing glossary update: {}", e.getMessage(), e);
+            throw new IOException("Failed to process glossary update: " + e.getMessage(), e);
         }
     }
 

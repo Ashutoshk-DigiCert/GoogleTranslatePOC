@@ -52,14 +52,21 @@ def getCredentialsPath() {
         if (credsFile.exists()) {
             return envCreds
         }
-        // If the path exists but doesn't point to an existing file,
-        // assume it's a relative path from the project directory
         return file(envCreds).absolutePath
     }
 
-    // Default path for local development
     def defaultPath = '/users/ashutosh.kodadur/translate-project-a-512-61bfb908cde0.json'
     return defaultPath
+}
+
+def getGlossaryPath(String targetLanguage) {
+    return "src/main/resources/glossaries/glossaries_${targetLanguage}.csv"
+}
+
+def validateLanguageCode(String langCode) {
+    if (!langCode.matches('^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$')) {
+        throw new GradleException("Invalid language code format: ${langCode}")
+    }
 }
 
 tasks.register('translateProperties', JavaExec) {
@@ -81,13 +88,8 @@ tasks.register('translateProperties', JavaExec) {
             throw new GradleException("Google credentials file not found at: ${credentialsPath}. Working directory: ${projectDir}")
         }
 
-        // Add validation for target languages format
         def languages = targetLanguages.split(',').toList()
-        languages.each { lang ->
-            if (!lang.matches('^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$')) {
-                throw new GradleException("Invalid language code format: ${lang}")
-            }
-        }
+        languages.each { lang -> validateLanguageCode(lang) }
 
         args = languages
     }
@@ -115,11 +117,7 @@ tasks.register('runJar', JavaExec) {
         }
 
         def languages = targetLanguages.split(',').toList()
-        languages.each { lang ->
-            if (!lang.matches('^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$')) {
-                throw new GradleException("Invalid language code format: ${lang}")
-            }
-        }
+        languages.each { lang -> validateLanguageCode(lang) }
 
         args = languages
     }
@@ -148,13 +146,58 @@ tasks.register('deleteGlossaries', JavaExec) {
         }
 
         def languages = targetLanguages.split(',').toList()
-        languages.each { lang ->
-            if (!lang.matches('^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$')) {
-                throw new GradleException("Invalid language code format: ${lang}")
+        languages.each { lang -> validateLanguageCode(lang) }
+
+        args = languages + ['deleteGlossary']
+    }
+
+    systemProperty "file.encoding", "UTF-8"
+    jvmArgs '-Dfile.encoding=UTF-8'
+}
+
+// ... (previous plugins and configurations remain the same)
+
+tasks.register('updateGlossary', JavaExec) {
+    group = 'Translation'
+    description = 'Updates glossary files and triggers retranslation for multiple languages'
+    mainClass = 'com.example.GoogleTranslateService'
+    classpath = sourceSets.main.runtimeClasspath
+
+    doFirst {
+        def targetLanguages = project.findProperty('targetLanguages')
+        if (!targetLanguages) {
+            // For backward compatibility, also check targetLanguage
+            targetLanguages = project.findProperty('targetLanguage')
+            if (!targetLanguages) {
+                throw new GradleException("Target languages must be specified. Use -PtargetLanguages=<lang1,lang2,...> or -PtargetLanguage=<lang>")
             }
         }
 
-        args = languages + ['deleteGlossary']
+        def languages = targetLanguages.split(',').toList()
+        languages.each { lang ->
+            validateLanguageCode(lang)
+            def glossaryPath = getGlossaryPath(lang)
+            if (!file(glossaryPath).exists()) {
+                throw new GradleException("Glossary file not found at: ${glossaryPath}")
+            }
+        }
+
+        def credentialsPath = getCredentialsPath()
+        environment 'GOOGLE_APPLICATION_CREDENTIALS', credentialsPath
+
+        if (!file(credentialsPath).exists()) {
+            throw new GradleException("Google credentials file not found at: ${credentialsPath}")
+        }
+
+        println "Target Languages: ${languages.join(', ')}"
+        println "Credentials Path: ${credentialsPath}"
+
+        // For each language, add the updateGlossary command and its glossary path
+        def fullArgs = []
+        languages.each { lang ->
+            fullArgs.addAll([lang, 'updateGlossary', getGlossaryPath(lang)])
+        }
+        args = fullArgs
     }
 
     systemProperty "file.encoding", "UTF-8"
