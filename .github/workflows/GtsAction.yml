@@ -32,7 +32,7 @@ jobs:
 
       - name: Update glossaries
         run: |
-          ./gradlew updateGlossary -PtargetLanguages=de,fr,it
+          ./gradlew updateGlossary -PtargetLanguages=de,fr,hi
         env:
           GOOGLE_APPLICATION_CREDENTIALS: google-credentials.json
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
