@@ -702,11 +702,18 @@ public class GoogleTranslateService {
         logger.info("Processing glossary update for language: {}", targetLanguage);
 
         try {
-            // Step 1: Upload the updated glossary file
+            // Step 1: Check if the glossary file exists
+            Path glossaryPath = Paths.get(glossaryFilePath);
+            if (!Files.exists(glossaryPath)) {
+                logger.warn("Glossary file not found at: {}. Skipping update for language: {}", glossaryFilePath, targetLanguage);
+                return; // Skip this language
+            }
+
+            // Step 2: Upload the updated glossary file
             logger.info("Step 1: Uploading glossary file: {}", glossaryFilePath);
             uploadGlossaryToCloudStorage(glossaryFilePath, targetLanguage);
 
-            // Step 2: Delete the existing glossary if it exists
+            // Step 3: Delete the existing glossary if it exists
             logger.info("Step 2: Deleting existing glossary for language: {}", targetLanguage);
             try {
                 deleteGlossary(targetLanguage);
@@ -718,7 +725,7 @@ public class GoogleTranslateService {
                 }
             }
 
-            // Step 3: Create new glossary
+            // Step 4: Create new glossary
             logger.info("Step 3: Creating new glossary for language: {}", targetLanguage);
             try (TranslationServiceClient client = TranslationServiceClient.create()) {
                 LocationName parent = LocationName.of(getProjectId(), getLocation());

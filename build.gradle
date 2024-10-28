@@ -178,7 +178,8 @@ tasks.register('updateGlossary', JavaExec) {
             validateLanguageCode(lang)
             def glossaryPath = getGlossaryPath(lang)
             if (!file(glossaryPath).exists()) {
-                throw new GradleException("Glossary file not found at: ${glossaryPath}")
+                logger.warn("Glossary file not found at: ${glossaryPath}. Skipping update for language: ${lang}")
+                return // Skip this language
             }
         }
 
