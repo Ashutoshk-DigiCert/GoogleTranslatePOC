@@ -24,8 +24,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Storage.BlobTargetOption.*;
-import com.google.cloud.storage.StorageOptions;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -85,11 +83,9 @@ public class GoogleTranslateService {
         }
 
         try {
-            // Process args in groups of 3 for updateGlossary command
             if (args.length >= 3 && args[1].equals("updateGlossary")) {
                 processMultipleGlossaryUpdates(args);
             } else {
-                // Handle normal translation or deletion command (existing functionality)
                 List<String> targetLanguages = new ArrayList<>(Arrays.asList(args));
                 boolean shouldDeleteGlossary = targetLanguages.remove("deleteGlossary");
 
@@ -148,7 +144,6 @@ public class GoogleTranslateService {
     private static void processMultipleGlossaryUpdates(String[] args) {
         logger.info("Processing multiple glossary updates");
 
-        // Process args in groups of 3 (targetLanguage, "updateGlossary", glossaryPath)
         for (int i = 0; i < args.length; i += 3) {
             if (i + 2 >= args.length) {
                 logger.error("Incomplete arguments for glossary update at position {}", i);
@@ -171,7 +166,6 @@ public class GoogleTranslateService {
                 logger.info("Successfully completed glossary update for language: {}", targetLanguage);
             } catch (IOException e) {
                 logger.error("Error updating glossary for language {}: {}", targetLanguage, e.getMessage(), e);
-                // Continue processing other languages even if one fails
             }
         }
     }
@@ -678,14 +672,11 @@ public class GoogleTranslateService {
                     .setContentType("text/csv")
                     .build();
 
-            // Read the file content
             Path path = Paths.get(filePath);
             byte[] content = Files.readAllBytes(path);
 
-            // Upload to GCS without any preconditions
             Blob blob = storage.create(blobInfo, content);
 
-            // Verify upload
             if (blob == null || !blob.exists()) {
                 throw new IOException("Failed to verify uploaded file in Cloud Storage");
             }
@@ -702,18 +693,15 @@ public class GoogleTranslateService {
         logger.info("Processing glossary update for language: {}", targetLanguage);
 
         try {
-            // Step 1: Check if the glossary file exists
             Path glossaryPath = Paths.get(glossaryFilePath);
             if (!Files.exists(glossaryPath)) {
                 logger.warn("Glossary file not found at: {}. Skipping update for language: {}", glossaryFilePath, targetLanguage);
-                return; // Skip this language
+                return;
             }
 
-            // Step 2: Upload the updated glossary file
             logger.info("Step 1: Uploading glossary file: {}", glossaryFilePath);
             uploadGlossaryToCloudStorage(glossaryFilePath, targetLanguage);
 
-            // Step 3: Delete the existing glossary if it exists
             logger.info("Step 2: Deleting existing glossary for language: {}", targetLanguage);
             try {
                 deleteGlossary(targetLanguage);
@@ -725,7 +713,6 @@ public class GoogleTranslateService {
                 }
             }
 
-            // Step 4: Create new glossary
             logger.info("Step 3: Creating new glossary for language: {}", targetLanguage);
             try (TranslationServiceClient client = TranslationServiceClient.create()) {
                 LocationName parent = LocationName.of(getProjectId(), getLocation());
