@@ -37,6 +37,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -48,24 +49,16 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
-
-import com.github.difflib.DiffUtils;
-import com.github.difflib.patch.AbstractDelta;
-import com.github.difflib.patch.Patch;
 
 public class GoogleTranslateService {
     private static final Logger logger = LoggerFactory.getLogger(GoogleTranslateService.class);
     private final Properties config;
     private final String glossaryFileName;
-    private static final String CACHE_DIR = "translation_cache";
-    private Map<String, PropertyEntry> previousTranslations;
 
     public GoogleTranslateService(String targetLanguage) throws IOException {
         logger.info("Initializing GoogleTranslateService for target language: {}", targetLanguage);
         this.config = loadConfig();
         this.glossaryFileName = String.format(config.getProperty("glossary.file.format"), targetLanguage.toLowerCase());
-        this.previousTranslations = loadPreviousTranslations(targetLanguage);
         logger.info("Glossary file name set to: {}", glossaryFileName);
     }
 
@@ -86,72 +79,94 @@ public class GoogleTranslateService {
     }
 
     public static void main(String[] args) {
-        logger.info("Starting Google Translate Service");
-        if (args.length < 1) {
-            logger.error("No arguments provided");
-            logger.error("Usage: java GoogleTranslateService <targetLanguage1> <targetLanguage2> ... [deleteGlossary]");
-            logger.error("   or: java GoogleTranslateService <targetLanguage> updateGlossary <glossaryPath>");
-            System.exit(1);
-        }
+    logger.info("Starting Google Translate Service");
+    if (args.length < 1) {
+        logger.error("No arguments provided");
+        logger.error("Usage: java GoogleTranslateService <targetLanguage1> <targetLanguage2> ... [deleteGlossary]");
+        logger.error("   or: java GoogleTranslateService <targetLanguage> updateGlossary <glossaryPath>");
+        logger.error("   or: java GoogleTranslateService <targetLanguage1> <targetLanguage2> ... --previous <previousVersionFile>");
+        System.exit(1);
+    }
 
-        try {
-            if (args.length >= 3 && args[1].equals("updateGlossary")) {
-                processMultipleGlossaryUpdates(args);
-            } else {
-                List<String> targetLanguages = new ArrayList<>(Arrays.asList(args));
-                boolean shouldDeleteGlossary = targetLanguages.remove("deleteGlossary");
+    try {
+        if (args.length >= 3 && args[1].equals("updateGlossary")) {
+            processMultipleGlossaryUpdates(args);
+        } else {
+            List<String> targetLanguages = new ArrayList<>();
+            String previousFile = null;
+            boolean shouldDeleteGlossary = false;
 
-                if (shouldDeleteGlossary) {
-                    for (String targetLanguage : targetLanguages) {
-                        try {
-                            GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
-                            translator.deleteGlossary(targetLanguage);
-                            logger.info("Glossary deletion attempt completed for language: {}", targetLanguage);
-                        } catch (IOException e) {
-                            logger.error("Error deleting glossary for language {}: {}", targetLanguage, e.getMessage(), e);
-                        }
-                    }
+            // Process all arguments
+            for (int i = 0; i < args.length; i++) {
+                if (args[i].equals("--previous") && i + 1 < args.length) {
+                    previousFile = args[i + 1];
+                    i++; // Skip the next argument since it's the file path
+                } else if (args[i].equals("deleteGlossary")) {
+                    shouldDeleteGlossary = true;
                 } else {
-                    for (String targetLanguage : targetLanguages) {
-                        try {
-                            logger.info("Processing translation for language: {}", targetLanguage);
-                            GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
-                            Properties config = translator.config;
+                    targetLanguages.add(args[i]);
+                }
+            }
 
-                            String inputPropsFile = config.getProperty("file.input.path");
-                            String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
+            // Process each language
+            for (String targetLanguage : targetLanguages) {
+                try {
+                    logger.info("Processing translation for language: {}", targetLanguage);
+                    GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+                    Properties config = translator.config;
 
-                            logger.info("Reading source properties from: {}", inputPropsFile);
-                            List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
+                    String inputPropsFile = config.getProperty("file.input.path");
+                    String outputPropsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
 
-                            if (originalEntries.isEmpty()) {
-                                logger.warn("No entries found in the source properties file: {}. Skipping translation for language: {}", inputPropsFile, targetLanguage);
-                                continue;
-                            }
+                    logger.info("Reading source properties from: {}", inputPropsFile);
+                    List<PropertyEntry> originalEntries = translator.readPropertiesFile(inputPropsFile);
 
-                            logger.info("Starting translation process for {} entries", originalEntries.size());
-                            List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage);
+                    if (originalEntries.isEmpty()) {
+                        logger.warn("No entries found in the source properties file: {}. Skipping translation for language: {}", inputPropsFile, targetLanguage);
+                        continue;
+                    }
 
-                            Path outputPath = Paths.get(outputPropsFile);
-                            Files.createDirectories(outputPath.getParent());
+                    logger.info("Starting translation process for {} entries", originalEntries.size());
+                    List<PropertyEntry> translatedEntries = translator.translateProperties(originalEntries, targetLanguage, previousFile);
 
-                            logger.info("Writing translated properties to: {}", outputPropsFile);
-                            writePropertiesUtf8(translatedEntries, outputPath.toString());
-                            logger.info("Successfully completed translation for language: {}", targetLanguage);
-                        } catch (IOException e) {
-                            logger.error("Fatal error during translation process for language {}: {}", targetLanguage, e.getMessage(), e);
-                            logger.error("Error during translation process:{} ", e.getMessage());
-                            e.printStackTrace();
-                            System.exit(1);
-                        }
+                    Path outputPath = Paths.get(outputPropsFile);
+                    Files.createDirectories(outputPath.getParent());
+
+                    logger.info("Writing translated properties to: {}", outputPropsFile);
+                    writePropertiesUtf8(translatedEntries, outputPath.toString());
+                } catch (IOException e) {
+                    logger.error("Error processing language {}: {}", targetLanguage, e.getMessage(), e);
+                }
+            }
+
+            // Add backup file update here
+            if (previousFile != null) {
+                // Create an instance to access config
+                GoogleTranslateService translator = new GoogleTranslateService(targetLanguages.get(0));
+                String inputPropsFile = translator.config.getProperty("file.input.path");
+                Files.copy(Paths.get(inputPropsFile), Paths.get(previousFile), StandardCopyOption.REPLACE_EXISTING);
+                logger.info("Updated backup file: {}", previousFile);
+            }
+
+            // Handle glossary deletion if requested
+            if (shouldDeleteGlossary) {
+                for (String targetLanguage : targetLanguages) {
+                    try {
+                        GoogleTranslateService translator = new GoogleTranslateService(targetLanguage);
+                        translator.deleteGlossary(targetLanguage);
+                    } catch (IOException e) {
+                        logger.error("Error deleting glossary for language {}: {}", targetLanguage, e.getMessage(), e);
                     }
                 }
             }
-        } catch (Exception e) {
-            logger.error("Fatal error during execution: {}", e.getMessage(), e);
-            System.exit(1);
         }
+    } catch (Exception e) {
+        logger.error("Fatal error during execution: {}", e.getMessage(), e);
+        System.exit(1);
     }
+}
+
+
 
     private static void processMultipleGlossaryUpdates(String[] args) {
         logger.info("Processing multiple glossary updates");
@@ -269,123 +284,160 @@ public class GoogleTranslateService {
             throw e;
         }
     }
+    private List<PropertyEntry> getModifiedEntries(String originalFile, String newFile) throws IOException {
+        List<PropertyEntry> originalEntries = readPropertiesFile(originalFile);
+        List<PropertyEntry> newEntries = readPropertiesFile(newFile);
+        List<PropertyEntry> modifiedEntries = new ArrayList<>();
 
-    private Map<String, PropertyEntry> loadPreviousTranslations(String targetLanguage) throws IOException {
-        String cacheFile = String.format("%s/cache_%s.properties", CACHE_DIR, targetLanguage);
-        Map<String, PropertyEntry> cache = new HashMap<>();
-        Path cachePath = Paths.get(cacheFile);
+        logger.info("Comparing files for changes:");
+        logger.info("Original file: {}", originalFile);
+        logger.info("New file: {}", newFile);
 
-        if (Files.exists(cachePath)) {
-            List<PropertyEntry> entries = readPropertiesFile(cacheFile);
-            for (PropertyEntry entry : entries) {
-                if (entry.type == EntryType.PROPERTY) {
-                    cache.put(entry.key, entry);
+        Map<String, PropertyEntry> originalMap = new HashMap<>();
+        originalEntries.forEach(entry -> {
+            if (entry.type == EntryType.PROPERTY) {
+                originalMap.put(entry.key, entry);
+            }
+        });
+
+        for (PropertyEntry newEntry : newEntries) {
+            if (newEntry.type == EntryType.PROPERTY) {
+                PropertyEntry originalEntry = originalMap.get(newEntry.key);
+                if (originalEntry == null) {
+                    logger.info("New entry detected - Key: {}, Value: {}", newEntry.key, String.join("", newEntry.lines));
+                    modifiedEntries.add(newEntry);
+                } else if (!originalEntry.lines.equals(newEntry.lines)) {
+                    logger.info("Modified entry detected - Key: {}", newEntry.key);
+                    logger.info("  Original value: {}", String.join("", originalEntry.lines));
+                    logger.info("  New value: {}", String.join("", newEntry.lines));
+                    modifiedEntries.add(newEntry);
                 }
             }
         }
 
-        return cache;
-    }
-
-    private void savePreviousTranslations(List<PropertyEntry> entries, String targetLanguage) throws IOException {
-        String cacheFile = String.format("%s/cache_%s.properties", CACHE_DIR, targetLanguage);
-        Path cachePath = Paths.get(cacheFile);
-        Files.createDirectories(cachePath.getParent());
-        writePropertiesUtf8(entries, cacheFile);
+        logger.info("Total modified/new entries detected: {}", modifiedEntries.size());
+        return modifiedEntries;
     }
 
 
 
-    public List<PropertyEntry> translateProperties(List<PropertyEntry> entries, String targetLanguage) throws IOException {
-        logger.info("Starting optimized translation process for target language: {}", targetLanguage);
-
-        // Create a map of property keys to their original entries for easier lookup
-        Map<String, PropertyEntry> currentEntriesMap = new HashMap<>();
-        for (PropertyEntry entry : entries) {
-            if (entry.type == EntryType.PROPERTY) {
-                currentEntriesMap.put(entry.key, entry);
-            }
+    public List<PropertyEntry> translateProperties(List<PropertyEntry> entries, String targetLanguage, String previousVersionFile) throws IOException {
+        logger.info("Starting translation process for target language: {}", targetLanguage);
+        String credentialsPath = System.getenv("GOOGLE_APPLICATION_CREDENTIALS");
+        if (credentialsPath == null || credentialsPath.isEmpty()) {
+            logger.error("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set");
+            throw new IOException("Environment variable GOOGLE_APPLICATION_CREDENTIALS is not set");
         }
 
-        // Create a list of keys for diff comparison
-        List<String> currentKeys = new ArrayList<>(currentEntriesMap.keySet());
-        List<String> previousKeys = new ArrayList<>(previousTranslations.keySet());
+        try (FileInputStream credentialsStream = new FileInputStream(credentialsPath)) {
+            GoogleCredentials credentials = GoogleCredentials.fromStream(credentialsStream);
+            logger.debug("Successfully loaded Google credentials from: {}", credentialsPath);
+        }
 
-        // Calculate diff between current and previous versions
-        Patch<String> patch = DiffUtils.diff(previousKeys, currentKeys);
         List<PropertyEntry> translatedEntries = new ArrayList<>();
 
         try (TranslationServiceClient client = TranslationServiceClient.create()) {
             LocationName parent = LocationName.of(getProjectId(), getLocation());
             String glossaryId = "glossary-" + targetLanguage.toLowerCase();
-            String glossaryName = parent.toString() + "/glossaries/" + glossaryId;
+            String glossaryName = LocationName.of(getProjectId(), getLocation()).toString() + "/glossaries/" + glossaryId;
+
             boolean glossaryExists = createGlossaryIfNotExists(client, parent, glossaryName, targetLanguage);
+            logger.info("Glossary status for {}: exists={}", targetLanguage, glossaryExists);
 
-            // Set to keep track of modified keys
-            Set<String> modifiedKeys = new HashSet<>();
+            List<PropertyEntry> modifiedEntries = entries;
+            Map<String, PropertyEntry> existingTranslationsMap = new HashMap<>();
 
-            // Identify modified or new keys from the patch
-            for (AbstractDelta<String> delta : patch.getDeltas()) {
-                for (String key : delta.getTarget().getLines()) {
-                    modifiedKeys.add(key);
+            if (previousVersionFile != null) {
+                String currentFile = config.getProperty("file.input.path");
+                modifiedEntries = getModifiedEntries(previousVersionFile, currentFile);
+                logger.info("Processing {} modified/new entries for incremental translation", modifiedEntries.size());
+
+                String existingTranslationsFile = String.format(config.getProperty("file.output.path.format"), targetLanguage);
+                try {
+                    List<PropertyEntry> existingTranslations = readPropertiesFile(existingTranslationsFile);
+                    logger.info("Loaded {} existing translations from {}", existingTranslations.size(), existingTranslationsFile);
+
+                    for (PropertyEntry entry : existingTranslations) {
+                        if (entry.type == EntryType.PROPERTY) {
+                            existingTranslationsMap.put(entry.key, entry);
+                        }
+                    }
+                } catch (IOException e) {
+                    logger.warn("No existing translations found at: {}. Creating new file.", existingTranslationsFile);
                 }
             }
 
-            // Process each entry
+            Set<String> processedKeys = new HashSet<>();
+            int totalEntries = entries.size();
+            int processedEntries = 0;
+
             for (PropertyEntry entry : entries) {
-                if (entry.type != EntryType.PROPERTY) {
-                    // Keep non-property entries unchanged
+                processedEntries++;
+                if (entry.type == EntryType.COMMENT || entry.type == EntryType.EMPTY_LINE) {
                     translatedEntries.add(entry);
                     continue;
                 }
 
-                PropertyEntry translatedEntry;
-                if (modifiedKeys.contains(entry.key)) {
-                    // Only translate if the key is new or modified
-                    logger.info("Translating modified/new entry: {}", entry.key);
-                    try {
-                        String translatedValue;
-                        if (glossaryExists) {
-                            translatedValue = translateValueWithGlossary(client, parent, String.join("\n", entry.lines), targetLanguage, glossaryName);
-                        } else {
-                            translatedValue = translateValueWithoutGlossary(client, parent, String.join("\n", entry.lines), targetLanguage);
-                        }
-                        String[] translatedLines = translatedValue.split("\n");
-                        translatedEntry = new PropertyEntry(entry.key, Arrays.asList(translatedLines), EntryType.PROPERTY);
-                    } catch (Exception e) {
-                        logger.error("Failed to translate modified entry: {}. Using original entry.", entry.key, e);
-                        translatedEntry = entry;
+                try {
+                    if (processedKeys.contains(entry.key)) {
+                        continue;
                     }
-                } else {
-                    // Use cached translation for unchanged entries
-                    PropertyEntry cachedEntry = previousTranslations.get(entry.key);
-                    if (cachedEntry != null) {
-                        logger.debug("Using cached translation for: {}", entry.key);
-                        translatedEntry = cachedEntry;
-                    } else {
-                        // Fallback to translation if somehow not in cache
-                        logger.warn("Cache miss for unchanged entry: {}. Performing translation.", entry.key);
-                        try {
+                    processedKeys.add(entry.key);
+
+                    boolean isModified = modifiedEntries.stream()
+                            .anyMatch(e -> e.key.equals(entry.key));
+
+                    if (previousVersionFile != null) {
+                        if (isModified) {
+                            String fullValue = String.join("\n", entry.lines);
+                            logger.info("Translating modified/new entry: {}", entry.key);
                             String translatedValue;
                             if (glossaryExists) {
-                                translatedValue = translateValueWithGlossary(client, parent, String.join("\n", entry.lines), targetLanguage, glossaryName);
+                                translatedValue = translateValueWithGlossary(client, parent, fullValue, targetLanguage, glossaryName);
                             } else {
-                                translatedValue = translateValueWithoutGlossary(client, parent, String.join("\n", entry.lines), targetLanguage);
+                                translatedValue = translateValueWithoutGlossary(client, parent, fullValue, targetLanguage);
                             }
-                            String[] translatedLines = translatedValue.split("\n");
-                            translatedEntry = new PropertyEntry(entry.key, Arrays.asList(translatedLines), EntryType.PROPERTY);
-                        } catch (Exception e) {
-                            logger.error("Failed to translate cache miss entry: {}. Using original entry.", entry.key, e);
-                            translatedEntry = entry;
+                            translatedEntries.add(new PropertyEntry(entry.key, Arrays.asList(translatedValue.split("\n")), EntryType.PROPERTY));
+                        } else if (existingTranslationsMap.containsKey(entry.key)) {
+                            translatedEntries.add(existingTranslationsMap.get(entry.key));
+                        } else {
+                            String fullValue = String.join("\n", entry.lines);
+                            logger.info("Translating new entry: {}", entry.key);
+                            String translatedValue;
+                            if (glossaryExists) {
+                                translatedValue = translateValueWithGlossary(client, parent, fullValue, targetLanguage, glossaryName);
+                            } else {
+                                translatedValue = translateValueWithoutGlossary(client, parent, fullValue, targetLanguage);
+                            }
+                            translatedEntries.add(new PropertyEntry(entry.key, Arrays.asList(translatedValue.split("\n")), EntryType.PROPERTY));
                         }
+                    } else {
+                        String fullValue = String.join("\n", entry.lines);
+                        logger.info("Translating entry: {}", entry.key);
+                        String translatedValue;
+                        if (glossaryExists) {
+                            translatedValue = translateValueWithGlossary(client, parent, fullValue, targetLanguage, glossaryName);
+                        } else {
+                            translatedValue = translateValueWithoutGlossary(client, parent, fullValue, targetLanguage);
+                        }
+                        translatedEntries.add(new PropertyEntry(entry.key, Arrays.asList(translatedValue.split("\n")), EntryType.PROPERTY));
                     }
-                }
-                translatedEntries.add(translatedEntry);
-            }
-        }
 
-        // Update cache with new translations
-        savePreviousTranslations(translatedEntries, targetLanguage);
+                    if (processedEntries % 100 == 0) {
+                        logger.info("Translation progress: {}/{} entries completed", processedEntries, totalEntries);
+                    }
+                } catch (Exception e) {
+                    logger.error("Failed to translate property: {} for language {}. Error: {}", entry.key, targetLanguage, e.getMessage(), e);
+                    translatedEntries.add(entry);
+                }
+            }
+
+            logger.info("Translation completed for language {}. Successfully translated {}/{} entries",
+                    targetLanguage, processedEntries, totalEntries);
+        } catch (ApiException e) {
+            logger.error("Error creating TranslationServiceClient: {}", e.getMessage(), e);
+            throw new IOException("Error creating TranslationServiceClient: " + e.getMessage(), e);
+        }
 
         return translatedEntries;
     }
