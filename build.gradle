@@ -173,7 +173,6 @@ tasks.register('runJar', JavaExec) {
     jvmArgs '-Dfile.encoding=UTF-8'
 }
 
-
 tasks.register('deleteGlossaries', JavaExec) {
     group = 'Translation'
     description = 'Deletes glossaries for specified target languages'
@@ -202,8 +201,6 @@ tasks.register('deleteGlossaries', JavaExec) {
     systemProperty "file.encoding", "UTF-8"
     jvmArgs '-Dfile.encoding=UTF-8'
 }
-
-// ... (previous plugins and configurations remain the same)
 
 tasks.register('updateGlossary', JavaExec) {
     group = 'Translation'

@@ -1,6 +1,7 @@
 #CSC Defaults
-tested=mock
-testing=pin
+tested=Donald trump
+testing=pin \
+  fot processing
 
 
 test=pin.
@@ -213,16 +214,6 @@ email.validation.verification.review.manual.request=Review manual validation req
 email.validation.verification.f2f.validation.requested=A face-to-face validation has been requested for \
 {0}.
 email.validation.verification.review.reject.or.approve.request=Review, reject, or approve this request:
-email.validation.approved.description.external.flow=We’ve approved your validation request. \
-You can now use <a href="{0}" target="_blank" style="text-decoration: none; cursor: pointer;">{0}</a> \
-to start signing documents with {1}.
-
-#email signer-approval template constants
-email.signer.approval.review.approve.validation=Review and approve validation
-email.signer.approval.validation.requested=We’ve received a request to validate {0}:
-email.validation.approved.description.external.flow=We’ve approved your validation request. \
-You can now use <a href="{0}" target="_blank" style="text-decoration: none; cursor: pointer;">{0}</a> \
-to start signing documents with {1}.
 
 #email validation approved template constants
 email.validation.approved.header=Validation approved
